@@ -1,0 +1,17 @@
+{
+  "name": "pi-packages-workspace",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Monorepo for personal pi coding agent packages.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "new:package": "node ./scripts/create-pi-package.mjs",
+    "list:packages": "npm pkg get name --workspaces",
+    "pack:all": "npm pack --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

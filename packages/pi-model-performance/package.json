@@ -1,0 +1,25 @@
+{
+  "name": "pi-model-performance",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Track ms to first token and output TPS for pi models",
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
+  "license": "MIT",
+  "files": [
+    "extensions",
+    "tsconfig.json",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}
