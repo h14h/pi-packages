@@ -15,6 +15,7 @@ import {
   summaryLine,
   parseRemoteUrl,
   dirtyText,
+  isStaleGitCommand,
 } from "./utils.js";
 
 // ── Mutable runtime state ──────────────────────────────────────────────────
@@ -578,7 +579,7 @@ export default function piGitContext(pi: ExtensionAPI) {
     return {};
   });
 
-  // Context: ephemeral injection — strip all prior git snapshots, append fresh one
+  // Context: ephemeral injection — strip stale git snapshots and stale git command outputs
   pi.on("context", async (event, ctx) => {
     if (!cache) {
       await refreshCache(ctx.cwd, pi, ctx);
@@ -590,6 +591,38 @@ export default function piGitContext(pi: ExtensionAPI) {
       const cm = m as Extract<AgentMessage, { role: "custom" }>;
       return cm.customType !== CUSTOM_TYPE;
     });
+
+    // Identify stale bash tool calls so we can replace their results
+    const staleToolCallIds = new Set<string>();
+    for (const m of filtered) {
+      if (m.role === "assistant" && Array.isArray(m.content)) {
+        for (const block of m.content) {
+          if (
+            block.type === "toolCall" &&
+            block.name === "bash" &&
+            typeof block.arguments?.command === "string" &&
+            isStaleGitCommand(block.arguments.command)
+          ) {
+            staleToolCallIds.add(block.id);
+          }
+        }
+      }
+    }
+
+    const STALE_STUB = "[stale git output — re-run if current data needed]";
+
+    for (const m of filtered) {
+      if (m.role === "toolResult" && staleToolCallIds.has(m.toolCallId)) {
+        for (const block of m.content) {
+          if (block.type === "text") {
+            block.text = STALE_STUB;
+          }
+        }
+      }
+      if (m.role === "bashExecution" && isStaleGitCommand(m.command)) {
+        m.output = STALE_STUB;
+      }
+    }
 
     filtered.push({
       role: "custom",

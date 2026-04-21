@@ -7,6 +7,7 @@ import {
   renderSnapshot,
   renderFooter,
   summaryLine,
+  isStaleGitCommand,
   type GitSnapshot,
 } from "../utils.js";
 
@@ -292,5 +293,42 @@ describe("summaryLine", () => {
 
   test("not in repo", () => {
     expect(summaryLine({ isRepo: false })).toBe("[Git State] Not in a git repository");
+  });
+});
+
+// ── isStaleGitCommand ──────────────────────────────────────────────────────
+
+describe("isStaleGitCommand", () => {
+  test("matches stale git commands", () => {
+    expect(isStaleGitCommand("git status")).toBe(true);
+    expect(isStaleGitCommand("git status --short")).toBe(true);
+    expect(isStaleGitCommand("git branch")).toBe(true);
+    expect(isStaleGitCommand("git branch -a")).toBe(true);
+    expect(isStaleGitCommand("git diff")).toBe(true);
+    expect(isStaleGitCommand("git diff --cached")).toBe(true);
+    expect(isStaleGitCommand("git stash list")).toBe(true);
+    expect(isStaleGitCommand("git worktree list")).toBe(true);
+    expect(isStaleGitCommand("git remote")).toBe(true);
+    expect(isStaleGitCommand("git remote -v")).toBe(true);
+  });
+
+  test("does not match historical/constant git commands", () => {
+    expect(isStaleGitCommand("git show abc123")).toBe(false);
+    expect(isStaleGitCommand("git blame file.ts")).toBe(false);
+    expect(isStaleGitCommand("git config --get user.name")).toBe(false);
+    expect(isStaleGitCommand("git log --oneline -5")).toBe(false);
+    expect(isStaleGitCommand("git diff-tree abc123")).toBe(false);
+    expect(isStaleGitCommand("git diff-index HEAD")).toBe(false);
+  });
+
+  test("does not match non-git commands", () => {
+    expect(isStaleGitCommand("ls -la")).toBe(false);
+    expect(isStaleGitCommand("cat package.json")).toBe(false);
+  });
+
+  test("handles compound shell commands", () => {
+    expect(isStaleGitCommand("cd /repo && git status")).toBe(true);
+    expect(isStaleGitCommand("git status | grep modified")).toBe(true);
+    expect(isStaleGitCommand("echo done && git log")).toBe(false);
   });
 });

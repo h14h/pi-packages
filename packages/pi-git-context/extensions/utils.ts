@@ -1,6 +1,19 @@
 // Pure utilities and types for pi-git-context.
 // No pi API dependencies — fully unit-testable.
 
+export const STALE_GIT_PATTERNS = [
+  /git\s+status(?![-\w])/,
+  /git\s+branch(?![-\w])/,
+  /git\s+diff(?![-\w])/,
+  /git\s+stash\s+list(?![-\w])/,
+  /git\s+worktree\s+list(?![-\w])/,
+  /git\s+remote(?![-\w])/,
+];
+
+export function isStaleGitCommand(command: string): boolean {
+  return STALE_GIT_PATTERNS.some((p) => p.test(command));
+}
+
 export const CUSTOM_TYPE = "pi-git-context:snapshot";
 export const STATUS_KEY = "git-context";
 export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
