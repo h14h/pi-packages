@@ -1,0 +1,29 @@
+{
+  "name": "pi-git-context",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Opinionated git state context injection for pi",
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
+  "license": "MIT",
+  "files": [
+    "extensions",
+    "tsconfig.json",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "test": "bun test extensions/__tests__"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  }
+}
