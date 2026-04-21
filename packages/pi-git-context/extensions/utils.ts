@@ -8,6 +8,11 @@ export const STALE_GIT_PATTERNS = [
   /git\s+stash\s+list(?![-\w])/,
   /git\s+worktree\s+list(?![-\w])/,
   /git\s+remote(?![-\w])/,
+  /git\s+log(?![-\w])/,
+  /git\s+reflog(?![-\w])/,
+  /git\s+describe(?![-\w])/,
+  /git\s+shortlog(?![-\w])/,
+  /git\s+cherry(?![-\w])/,
 ];
 
 export function isStaleGitCommand(command: string): boolean {

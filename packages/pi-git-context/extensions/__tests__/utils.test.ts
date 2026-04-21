@@ -310,13 +310,19 @@ describe("isStaleGitCommand", () => {
     expect(isStaleGitCommand("git worktree list")).toBe(true);
     expect(isStaleGitCommand("git remote")).toBe(true);
     expect(isStaleGitCommand("git remote -v")).toBe(true);
+    expect(isStaleGitCommand("git log")).toBe(true);
+    expect(isStaleGitCommand("git log --oneline -10")).toBe(true);
+    expect(isStaleGitCommand("git reflog")).toBe(true);
+    expect(isStaleGitCommand("git describe")).toBe(true);
+    expect(isStaleGitCommand("git shortlog")).toBe(true);
+    expect(isStaleGitCommand("git cherry")).toBe(true);
   });
 
   test("does not match historical/constant git commands", () => {
     expect(isStaleGitCommand("git show abc123")).toBe(false);
     expect(isStaleGitCommand("git blame file.ts")).toBe(false);
     expect(isStaleGitCommand("git config --get user.name")).toBe(false);
-    expect(isStaleGitCommand("git log --oneline -5")).toBe(false);
+    expect(isStaleGitCommand("git show abc123")).toBe(false);
     expect(isStaleGitCommand("git diff-tree abc123")).toBe(false);
     expect(isStaleGitCommand("git diff-index HEAD")).toBe(false);
   });
@@ -329,6 +335,7 @@ describe("isStaleGitCommand", () => {
   test("handles compound shell commands", () => {
     expect(isStaleGitCommand("cd /repo && git status")).toBe(true);
     expect(isStaleGitCommand("git status | grep modified")).toBe(true);
-    expect(isStaleGitCommand("echo done && git log")).toBe(false);
+    expect(isStaleGitCommand("echo done && git log")).toBe(true);
+    expect(isStaleGitCommand("echo done && git show abc123")).toBe(false);
   });
 });
