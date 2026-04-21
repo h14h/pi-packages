@@ -1,5 +1,7 @@
 # pi-model-performance
 
+> **Local package** — not published to npm. Install via local path or git source.
+
 A pi extension package for measuring model responsiveness in real use.
 
 It tracks, per assistant turn:

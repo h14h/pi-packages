@@ -83,6 +83,46 @@ npm run new:package -- --name @your-scope/pi-toolbox --types extensions,skills,p
 - Avoid adding unnecessary build steps unless the package actually needs compilation.
 - For extension packages, keep pi libraries in `peerDependencies` with `"*"` ranges when imported.
 
+## Publishing & Semver
+
+Each package under `packages/` is independently publishable to npm. The package README must indicate its npm status.
+
+### README npm status header
+
+Every package README must start with one of these badges:
+
+**Published to npm:**
+```markdown
+# package-name
+
+[![npm](https://img.shields.io/npm/v/package-name)](https://www.npmjs.com/package/package-name)
+```
+
+**Not published to npm (local only):**
+```markdown
+# package-name
+
+> **Local package** — not published to npm. Install via local path or git source.
+```
+
+### Semver rules
+
+| Bump | When to use |
+|------|-------------|
+| `patch` (0.0.x) | Bug fixes, docs fixes, footer tweaks, expanded whitelists, test additions |
+| `minor` (0.x.0) | New snapshot fields, new commands, new footer indicators, new tool registrations |
+| `major` (x.0.0) | Breaking changes to snapshot format, removed features, changed default behavior |
+
+### Pre-publish checklist
+
+1. Tests pass: `cd packages/<name> && bun test`
+2. README reflects current behavior and has correct npm status badge
+3. `npm version patch|minor|major` (creates git tag automatically)
+4. `npm publish --access public` (or `--otp=<code>` if 2FA)
+5. Push version bump commit + tag to GitHub
+
+**Never commit `.tgz` tarballs.** Add `*.tgz` to `.gitignore` before first publish.
+
 ## Useful Commands
 - Create a package: `npm run new:package -- --name my-pi-package --types extensions`
 - Pack all packages: `npm run pack:all`

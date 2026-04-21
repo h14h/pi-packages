@@ -1,5 +1,7 @@
 # pi-git-context
 
+[![npm](https://img.shields.io/npm/v/pi-git-context)](https://www.npmjs.com/package/pi-git-context)
+
 Opinionated git state context injection for [pi](https://github.com/badlogic/pi-mono).
 
 ## What it does

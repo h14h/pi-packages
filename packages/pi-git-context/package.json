@@ -1,6 +1,6 @@
 {
   "name": "pi-git-context",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Opinionated git state context injection for pi",
   "keywords": [
