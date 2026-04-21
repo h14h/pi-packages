@@ -26,6 +26,7 @@ let pendingToolMutation = false;
 let refreshing = false;
 let spinnerFrame = 0;
 let spinnerTimer: ReturnType<typeof setInterval> | null = null;
+let currentTurnIndex = -1;
 
 // ── Spinner helpers ────────────────────────────────────────────────────────
 
@@ -532,8 +533,14 @@ export default function piGitContext(pi: ExtensionAPI) {
     }
   });
 
-  // On agent end, kick off background refresh if files changed
+  // Track turn index so context injection only happens on first turn
+  pi.on("turn_start", async (event) => {
+    currentTurnIndex = event.turnIndex;
+  });
+
+  // On agent end: reset turn tracker and kick off background refresh if files changed
   pi.on("agent_end", async (_event, ctx) => {
+    currentTurnIndex = -1;
     if (pendingToolMutation) {
       pendingToolMutation = false;
       // Don't await — background refresh
@@ -591,6 +598,11 @@ export default function piGitContext(pi: ExtensionAPI) {
       const cm = m as Extract<AgentMessage, { role: "custom" }>;
       return cm.customType !== CUSTOM_TYPE;
     });
+
+    // Only inject fresh snapshot on first turn; strip old ones on all turns
+    if (currentTurnIndex !== 0) {
+      return { messages: filtered };
+    }
 
     // Identify stale bash tool calls so we can replace their results
     const staleToolCallIds = new Set<string>();
