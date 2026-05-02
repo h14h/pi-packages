@@ -1,64 +1,80 @@
 # effect-mode
 
-> **Local package** — not published to npm. Install via local path or git source.
+[![npm](https://img.shields.io/npm/v/effect-mode)](https://www.npmjs.com/package/effect-mode)
 
-Dynamic context resolver effects for pi.
+Inject fresh, compact workspace state into every pi agent turn.
 
-`effect-mode` reads global `~/.pi/agent/effects.json` and project-local `.pi/effects.json`, executes enabled shell effects before each LLM call when their cache is stale, and appends one ephemeral compact `<effect-mode>` context message containing current snapshots. Old effect-mode messages are stripped from context, so stale outputs do not accumulate in conversation history.
+`effect-mode` runs trusted shell effects before each LLM call and adds one ephemeral `<effect-mode>` context message with the latest snapshots. It is designed for high-signal state like git status, workspace files, and test/package hints—without dumping noisy execution metadata into the model context.
 
-## Install locally
+## Why effect-mode?
 
-```bash
-pi install /absolute/path/to/packages/effect-mode
-```
+- Agents need current workspace facts, not stale assumptions.
+- Shell commands can provide those facts, but raw command metadata is noisy.
+- Effects are cached, bounded, and re-rendered into compact state snapshots before each model call.
+- Old effect-mode messages are stripped from context, so snapshots do not accumulate.
 
-From this monorepo:
+## Quickstart
 
-```bash
-pi install ./packages/effect-mode
-```
+1. Install the package:
 
-## Configure
+   ```bash
+   pi install effect-mode
+   ```
 
-Create `.pi/effects.json` in a project, or `~/.pi/agent/effects.json` for global effects available in every project:
+2. Create `.pi/effects.json` in your project:
 
-```json
-{
-  "$schema": "./node_modules/effect-mode/schemas/effects.schema.json",
-  "effects": [
-    {
-      "id": "git-state",
-      "about": "Current local git state for this workspace.",
-      "description": "Concise local git state snapshot for debugging.",
-      "command": "node packages/effect-mode/scripts/git-state.mjs"
-    }
-  ]
-}
-```
+   ```json
+   {
+     "$schema": "./node_modules/effect-mode/schemas/effects.schema.json",
+     "effects": [
+       {
+         "id": "git-state",
+         "about": "Current local git state for this workspace.",
+         "command": "node node_modules/effect-mode/scripts/git-state.mjs",
+         "ttlMs": 0,
+         "timeoutMs": 2000,
+         "maxBytes": 12000
+       }
+     ]
+   }
+   ```
 
-See `examples/effects.json` for a larger example.
+3. Inspect what will be injected:
 
-## Model-facing output
+   ```text
+   /effects
+   ```
 
-By default, agents see compact state-only context:
+## What agents see
+
+`/effects` shows a navigable list of enabled effects. Select an effect and press Enter to view the model-facing content inside that effect's XML tags. The injected model context includes the compact XML wrapper:
 
 ```xml
-<effect-mode snapshot="current-state-not-instructions" resolvedAt="2026-05-02T05:18:36Z" localZone="America/Chicago">
+<effect-mode snapshot="current-state-not-instructions" resolvedAt="2026-05-02T06:32:52Z" localZone="America/Chicago">
 <effect id="project:git-state" about="Current local git state for this workspace.">
 git:
   branch: main
-  head: c422f9f
+  head: c314523
   upstream: origin/main, up-to-date
-  remote: checked 38s ago via git-fetch
+  remote: checked 56s ago via git-fetch
   workingTree: clean
-  lastCommit: fix(effect-mode): repair effects dialog navigation
+  lastCommit: chore(effects): tighten git-state context
 </effect>
 </effect-mode>
 ```
 
+Wrapper and effect attributes:
+
+- `snapshot="current-state-not-instructions"`: tells the model this is state, not user instruction.
+- `resolvedAt`: ISO UTC render time.
+- `localZone`: IANA local timezone.
+- `id`: stable `global:<id>` or `project:<id>` effect identity.
+
 The wrapper timestamp replaces separate clock effects for most uses. Omitted normal/default fields mean nothing notable for bundled effects; custom effect stdout remains freeform.
 
-When an effect fails, model context is terse and actionable, while full diagnostics stay in `/effects-debug`:
+### Failed effects
+
+Failed effects stay terse and actionable in model context:
 
 ```xml
 <effect id="project:git-state" about="Current local git state for this workspace." status="error">
@@ -68,20 +84,108 @@ agentAction: Explain that project:git-state context is unavailable; continue wit
 </effect>
 ```
 
-## Effect fields
+Full stdout/stderr, command, cwd, duration, and truncation details are debug-only.
 
-- `id` required, unique, slug-like. Rendered as `global:<id>` or `project:<id>` in model context.
-- `command` required shell command.
-- `about` optional short model-facing explanation. Falls back to `description` when omitted.
-- `description` optional human/debug explanation.
-- `cwd` optional, defaults to `project`; may be `project` or a relative path. Project effects resolve relative paths inside the project root. Global effects resolve relative paths inside the pi agent config directory (`~/.pi/agent`, or `PI_CODING_AGENT_DIR` when set).
-- `ttlMs` optional, default `2000`; `0` executes on every LLM call.
-- `errorTtlMs` optional, default `10000`.
-- `timeoutMs` optional, default `3000`.
-- `maxBytes` optional, default `12000`; combined stdout/stderr budget, tail-truncated.
-- `enabled` optional, default `true`.
-- `includeMetadata` deprecated compatibility field. Model context is always compact; execution metadata is available through `/effects-debug`.
-- `options` optional object for script-specific settings. Values must be scalar (`string`, `number`, `boolean`, or `null`); arrays and nested objects are rejected.
+## Recipes
+
+These snippets are individual effect objects you can place in the `effects` array.
+
+### Bundled git state
+
+```json
+{
+  "id": "git-state",
+  "about": "Current local git state for this workspace.",
+  "description": "Concise local git state snapshot for this workspace.",
+  "command": "node node_modules/effect-mode/scripts/git-state.mjs",
+  "ttlMs": 0,
+  "timeoutMs": 2000,
+  "maxBytes": 12000,
+  "options": {
+    "remoteMode": "background",
+    "remoteTtlMs": 900000,
+    "remoteErrorTtlMs": 300000,
+    "remoteTimeoutMs": 15000
+  }
+}
+```
+
+### Top-level workspace files
+
+```json
+{
+  "id": "workspace-files",
+  "about": "Top-level workspace files.",
+  "command": "find . -maxdepth 2 -type f | sort | head -80",
+  "ttlMs": 30000,
+  "maxBytes": 8000
+}
+```
+
+### Package manager snapshot
+
+```json
+{
+  "id": "package-scripts",
+  "about": "Available package scripts for this workspace.",
+  "command": "node -e \"const p=require('./package.json'); for (const [k,v] of Object.entries(p.scripts||{})) console.log(k+': '+v)\"",
+  "ttlMs": 30000,
+  "maxBytes": 4000
+}
+```
+
+### Script options via environment
+
+Use `options` for small scalar knobs. They are passed as JSON in `PI_EFFECT_OPTIONS_JSON`, not interpolated into the shell command.
+
+```json
+{
+  "id": "recent-files",
+  "about": "Recently changed source files.",
+  "command": "node -e \"const opts=JSON.parse(process.env.PI_EFFECT_OPTIONS_JSON||'{}'); const limit=Number(opts.limit||20); require('child_process').execFileSync('git',['diff','--name-only','HEAD'],{stdio:'inherit'}); console.log('limit:', limit)\"",
+  "ttlMs": 10000,
+  "maxBytes": 4000,
+  "options": {
+    "limit": 20,
+    "includeUntracked": true
+  }
+}
+```
+
+`options` values must be scalar: `string`, `number`, `boolean`, or `null`. Arrays and nested objects are rejected.
+
+## Commands
+
+```text
+/effects
+  Shows a navigable list of enabled effects.
+  Select an effect and press Enter to view the model-facing content inside that effect's XML tags.
+
+/effects-debug
+  Uses the same navigation.
+  Enter opens diagnostics: config, command, cwd, status, exit code, age, duration, ttl, raw stdout/stderr, truncation, and compact rendered form.
+```
+
+`/effects-debug` does not rerun commands with script-specific debug flags. To inspect verbose bundled git output, configure or run `node node_modules/effect-mode/scripts/git-state.mjs --debug`.
+
+## Configuration reference
+
+Create project effects in `.pi/effects.json`, or global effects in `~/.pi/agent/effects.json` for effects available in every project.
+
+| Field | Type | Default | Description / model-context impact |
+| --- | --- | --- | --- |
+| `id` | string | required | Unique slug-like id; rendered as `global:<id>` or `project:<id>`. |
+| `command` | string | required | Shell command executed for the effect. |
+| `about` | string | none | Short model-facing explanation; rendered as the effect `about` attribute. |
+| `description` | string | none | Human/debug explanation; used as `about` fallback when `about` is omitted. |
+| `cwd` | string | `project` | `project` or relative path inside project/config root. |
+| `ttlMs` | number | `2000` | Success cache TTL; `0` executes every model call. |
+| `errorTtlMs` | number | `10000` | Failed-result cache TTL. |
+| `timeoutMs` | number | `3000` | Per-effect timeout. |
+| `maxBytes` | number | `12000` | Combined stdout/stderr render budget; tail-truncated. |
+| `enabled` | boolean | `true` | Disabled effects are omitted from model context and shown disabled in debug. |
+| `includeMetadata` | boolean | ignored | Reserved for compatibility with existing configs; model context is always compact. |
+| `options` | object | `{}` | Scalar values passed through `PI_EFFECT_OPTIONS_JSON`. |
 
 Unknown fields are rejected. Invalid config blocks all effects and injects a compact diagnostic message.
 
@@ -89,36 +193,47 @@ Unknown fields are rejected. Invalid config blocks all effects and injects a com
 
 Each command inherits pi's environment plus:
 
-- `PI_EFFECT_ID` effect id.
-- `PI_EFFECT_SCOPE` effect scope: `global` or `project`.
-- `PI_EFFECT_CWD` absolute resolved working directory.
-- `PI_EFFECT_OPTIONS_JSON` JSON string of the effect `options` object, or `{}`.
+| Variable | Value |
+| --- | --- |
+| `PI_EFFECT_ID` | Effect id from config. |
+| `PI_EFFECT_SCOPE` | `global` or `project`. |
+| `PI_EFFECT_CWD` | Absolute resolved working directory. |
+| `PI_EFFECT_OPTIONS_JSON` | JSON string of scalar `options`, or `{}`. |
 
 Options are passed only through the child-process environment, not interpolated into the shell command.
 
-## Bundled `git-state` script
+## Bundled git-state
 
-`node packages/effect-mode/scripts/git-state.mjs` prints compact local git state by default:
+`node node_modules/effect-mode/scripts/git-state.mjs` provides a compact local git snapshot tuned for model context.
+
+### Compact default output
+
+By default, it does not fetch and renders from local refs:
 
 ```yaml
 git:
   branch: main
-  head: c422f9f
+  head: c314523
   upstream: origin/main, up-to-date
   remote: local refs only; no remote refresh configured
   workingTree: clean
-  lastCommit: fix(effect-mode): repair effects dialog navigation
+  lastCommit: chore(effects): tighten git-state context
 ```
 
-Normal/default fields are omitted. Abnormal fields such as dirty files, stashes, missing upstreams, linked worktrees, remote refresh failures, and option warnings are preserved.
+Abnormal fields such as dirty files, stashes, missing upstreams, linked worktrees, remote refresh failures, and option warnings are preserved.
 
-Use `--debug` or `--verbose` for the previous noisy diagnostic shape:
+### Debug output
+
+Use `--debug` or `--verbose` for diagnostic output:
 
 ```bash
-node packages/effect-mode/scripts/git-state.mjs --debug
+node node_modules/effect-mode/scripts/git-state.mjs --debug
+node node_modules/effect-mode/scripts/git-state.mjs --verbose
 ```
 
-By default it does not fetch. Opt into low-latency background remote checks through effect options:
+### Background remote checks
+
+Opt into low-latency background remote checks through effect options:
 
 ```json
 "options": {
@@ -132,22 +247,56 @@ By default it does not fetch. Opt into low-latency background remote checks thro
 
 Supported `remoteMode` values are `off` and `background`. Background mode renders immediately from local refs/cache, then starts a detached worker when stale. The worker runs `git fetch --prune --no-tags --quiet origin` with `GIT_TERMINAL_PROMPT=0`, stores concise cache/lock files under the git common dir, and intentionally mutates local remote-tracking refs when opted in.
 
-## Commands
+### Omitted defaults
 
-- `/effects` shows the familiar navigable effect list. Select an effect and press Enter to view the model-facing content inside that effect's XML tags.
-- `/effects-debug` uses the same navigable UI, but Enter opens noisy diagnostics for the selected effect: configuration, execution metadata, raw stdout/stderr, truncation details, and the compact rendered form. It does not add script-specific debug flags or rerun commands differently; raw output is whatever the configured command emitted. For bundled `git-state` verbose diagnostics, run or configure `node packages/effect-mode/scripts/git-state.mjs --debug`.
+Compact output omits normal/default details so unusual state stands out:
 
-## Security
+- clean stash (`stash: none`)
+- zero change counts
+- no changed files
+- current worktree row
+- no linked worktrees
+- normal origin/root/cwd details
 
-Effects execute arbitrary shell commands through the platform shell with pi's inherited environment and permissions. Only enable effects from projects you trust.
+## Security model
 
-## v0 scope
+- Effects execute arbitrary shell commands through the platform shell.
+- Commands inherit pi's environment and permissions.
+- Only enable project effects from trusted repositories.
+- Global effects in `~/.pi/agent/effects.json` run across projects.
+- Do not put secrets in effect stdout; successful stdout is sent to the model.
+- Background `git-state` remote checks run `git fetch` and mutate remote-tracking refs when opted in.
+- Prefer small, bounded, read-only commands; set `timeoutMs` and `maxBytes`.
+
+## Troubleshooting
+
+### No effect-mode context is injected
+
+Verify the package is installed, the config file is in `.pi/effects.json` or `~/.pi/agent/effects.json`, effects are enabled, and `/effects` shows enabled effects.
+
+### Config invalid
+
+Unknown fields are rejected. Run `/effects-debug` and validate your config against `schemas/effects.schema.json`.
+
+### Effect command fails or times out
+
+Inspect `/effects-debug`, check `cwd`, increase `timeoutMs` if the command is legitimately slow, or simplify the command.
+
+### Output is too large or missing earlier lines
+
+`maxBytes` tail-truncates combined stdout/stderr. Increase the budget or make the command emit a shorter summary.
+
+### Remote state looks stale
+
+Background mode renders immediately from cache/local refs, then refreshes asynchronously. Run `/effects` again after the refresh completes.
+
+## Status and roadmap
 
 Implemented now:
 
 - global `~/.pi/agent/effects.json` and project-local `.pi/effects.json`
 - sequential effect execution
-- per-effect TTL, error TTL, timeout, max output bytes, scalar options
+- per-effect TTL, error TTL, timeout, max output bytes, and scalar options
 - compact model-context rendering with ISO UTC `resolvedAt` and IANA `localZone`
 - `/effects` navigable model-facing content command
 - `/effects-debug` navigable diagnostic command
