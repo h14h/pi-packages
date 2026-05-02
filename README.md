@@ -1,112 +1,19 @@
 # pi-packages
 
-A lightweight npm workspaces monorepo for personal [pi coding agent](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) packages.
+A small collection of packages for [pi](https://www.npmjs.com/package/@mariozechner/pi-coding-agent), a coding agent that can be extended with tools, skills, prompts, and themes.
 
-## What this repo is for
+This repository is a home for experiments and utilities that make pi more useful in day-to-day coding work. Some packages are published to npm; others are local-only until they feel generally useful.
 
-- creating standalone pi packages with minimal ceremony
-- keeping each package installable directly from its own folder
-- leaving the door open to publish useful packages to npm later
+## Packages
 
-Each package lives in `packages/<name>/` and should be usable on its own via:
+Each package has its own README with installation instructions, status, and usage details:
 
-```bash
-pi install ./packages/<name>
-```
+- [`effect-mode`](./packages/effect-mode/README.md) — injects fresh, compact workspace state into every pi agent turn.
+- [`pi-git-context`](./packages/pi-git-context/README.md) — adds concise git repository context to pi sessions.
+- [`pi-model-performance`](./packages/pi-model-performance/README.md) — local extension for measuring model responsiveness in real use.
 
-Or, after publishing:
+## How this repo is organized
 
-```bash
-pi install npm:<package-name>
-```
+Packages live under [`packages/`](./packages/). Each one is intended to be understandable and installable on its own, whether from a local checkout or from npm when published.
 
-## Workspace layout
-
-```text
-.
-├── AGENTS.md
-├── package.json
-├── packages/
-├── scripts/
-└── tsconfig.base.json
-```
-
-## Create a new package
-
-Use the scaffold script:
-
-```bash
-npm run new:package -- --name my-pi-package --types extensions
-```
-
-You can scaffold one or more pi resource types at once:
-
-```bash
-npm run new:package -- --name my-pi-toolbox --types extensions,skills,prompts
-```
-
-Supported types:
-
-- `extensions`
-- `skills`
-- `prompts`
-- `themes`
-
-### Examples
-
-```bash
-npm run new:package -- --name @your-scope/pi-git-tools --types extensions
-npm run new:package -- --name my-pi-writing-kit --types prompts,skills
-npm run new:package -- --name my-pi-theme-pack --types themes
-```
-
-## Working with packages
-
-List workspaces:
-
-```bash
-npm run list:packages
-```
-
-Pack every package into npm tarballs:
-
-```bash
-npm run pack:all
-```
-
-Pack one package:
-
-```bash
-npm pack --workspace <package-name>
-```
-
-## Publishing later
-
-When a package feels reusable, publish just that workspace:
-
-```bash
-npm publish --workspace <package-name> --access public
-```
-
-If you want to test the exact tarball first:
-
-```bash
-npm pack --workspace <package-name>
-pi install ./<generated-tarball>.tgz
-```
-
-## Notes for pi packages
-
-Per pi package docs:
-
-- add the `pi-package` keyword for discoverability
-- declare resources in `package.json` under `pi`
-- keep third-party runtime libraries in `dependencies`
-- if an extension imports pi packages like `@mariozechner/pi-coding-agent` or `@sinclair/typebox`, use `peerDependencies` with `"*"`
-
-## Recommended flow with agents
-
-1. Ask an agent to scaffold a package with `npm run new:package ...`
-2. Have it implement the package inside that workspace
-3. Test locally with `pi install ./packages/<name>`
-4. If it proves useful, `npm pack` or `npm publish` that workspace
+If you are just browsing, start with the package READMEs above. The root-level files are mostly workspace plumbing and maintainer notes.

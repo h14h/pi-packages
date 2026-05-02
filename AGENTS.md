@@ -82,6 +82,14 @@ npm run new:package -- --name @your-scope/pi-toolbox --types extensions,skills,p
 - Prefer small, focused packages over one giant catch-all package.
 - Avoid adding unnecessary build steps unless the package actually needs compilation.
 - For extension packages, keep pi libraries in `peerDependencies` with `"*"` ranges when imported.
+- Before finishing package work, inspect the package's `package.json` and run relevant package-local checks when available, such as tests, typechecks, or builds.
+- If package dependencies or versions change, update and commit the corresponding lockfile changes unless the user explicitly asks not to.
+
+## Documentation Boundaries
+- Keep the root `README.md` slim and human-facing. It should explain what this repo is and point curious readers to package-specific READMEs.
+- Keep maintainer workflow, scaffolding, publishing, and agent-specific instructions in `AGENTS.md`, not the root README.
+- Every package README should explain what the package does, whether it is published or local-only, how to install it, and basic usage.
+- When package behavior changes, update that package's README in the same task so docs do not drift from implementation.
 
 ## Publishing & Semver
 
