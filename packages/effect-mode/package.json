@@ -1,8 +1,17 @@
 {
   "name": "effect-mode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "description": "Dynamic context resolver effects for pi",
+  "homepage": "https://github.com/h14h/pi-packages/tree/main/packages/effect-mode#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/h14h/pi-packages.git",
+    "directory": "packages/effect-mode"
+  },
+  "bugs": {
+    "url": "https://github.com/h14h/pi-packages/issues"
+  },
   "keywords": [
     "pi-package",
     "pi-extension"
