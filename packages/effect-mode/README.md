@@ -18,7 +18,7 @@ Inject fresh, compact workspace state into every pi agent turn.
 1. Install the package:
 
    ```bash
-   pi install effect-mode
+   pi install npm:effect-mode
    ```
 
 2. Create `.pi/effects.json` in your project:
