@@ -17,9 +17,6 @@
     "README.md",
     "package.json"
   ],
-  "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
   "pi": {
     "extensions": [
       "./extensions"
@@ -29,11 +26,5 @@
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
-  },
-  "devDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
-    "@types/node": "*",
-    "typescript": "*"
   }
 }
