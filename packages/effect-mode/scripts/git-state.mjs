@@ -1,10 +1,20 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, openSync, readFileSync, renameSync, closeSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const COMMAND_TIMEOUT_MS = 800;
 const STATUS_LIST_LIMIT = 30;
 const WORKTREE_LINK_LIMIT = 10;
+const REMOTE_CACHE_VERSION = 1;
+const DEFAULT_REMOTE_OPTIONS = {
+  remoteMode: "off",
+  remoteTtlMs: 900_000,
+  remoteErrorTtlMs: 300_000,
+  remoteTimeoutMs: 15_000,
+  remoteLockTtlMs: 120_000,
+};
 
 function runGit(args, options = {}) {
   const result = spawnSync("git", args, {
@@ -39,6 +49,12 @@ function compactSubject(value) {
   const line = firstLine(value).trim();
   if (!line) return "unknown";
   return line.length > 120 ? `${line.slice(0, 117)}...` : line;
+}
+
+function compactMessage(value) {
+  const line = firstLine(value).trim();
+  if (!line) return "unknown";
+  return line.length > 160 ? `${line.slice(0, 157)}...` : line;
 }
 
 function stripRemoteCredentials(value) {
@@ -157,23 +173,256 @@ function formatWorktreeRow(kind, wt, repoRoot, currentDirty) {
   return `- ${kind} path=${compactPath(wt.path, repoRoot)} ${state} head=${shortSha(wt.head)}${dirty}`;
 }
 
-function printOutsideGit(reason) {
+function isScalarOptionValue(value) {
+  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function parseEffectOptions() {
+  const warnings = [];
+  const opts = { ...DEFAULT_REMOTE_OPTIONS };
+  const raw = process.env.PI_EFFECT_OPTIONS_JSON;
+  let parsed = {};
+
+  if (raw && raw.trim()) {
+    try {
+      const value = JSON.parse(raw);
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        warnings.push("PI_EFFECT_OPTIONS_JSON must be an object; using defaults");
+      } else {
+        for (const [key, optionValue] of Object.entries(value)) {
+          if (!isScalarOptionValue(optionValue)) {
+            warnings.push(`ignored non-scalar option ${key}`);
+            continue;
+          }
+          parsed[key] = optionValue;
+        }
+      }
+    } catch (error) {
+      warnings.push(`invalid PI_EFFECT_OPTIONS_JSON: ${compactMessage(error instanceof Error ? error.message : String(error))}`);
+    }
+  }
+
+  if (parsed.remoteMode !== undefined) {
+    if (parsed.remoteMode === "off" || parsed.remoteMode === "background") opts.remoteMode = parsed.remoteMode;
+    else warnings.push("remoteMode must be 'off' or 'background'; using off");
+  }
+
+  for (const key of ["remoteTtlMs", "remoteErrorTtlMs"]) {
+    if (parsed[key] === undefined) continue;
+    if (typeof parsed[key] === "number" && Number.isFinite(parsed[key]) && parsed[key] >= 0) opts[key] = parsed[key];
+    else warnings.push(`${key} must be a non-negative number; using default`);
+  }
+
+  for (const key of ["remoteTimeoutMs", "remoteLockTtlMs"]) {
+    if (parsed[key] === undefined) continue;
+    if (typeof parsed[key] === "number" && Number.isFinite(parsed[key]) && parsed[key] > 0) opts[key] = parsed[key];
+    else warnings.push(`${key} must be a positive number; using default`);
+  }
+
+  return { options: opts, warnings };
+}
+
+function formatAge(ms) {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
+  return `${Math.round(ms / 86_400_000)}d`;
+}
+
+function getRemoteDir() {
+  const result = runGit(["rev-parse", "--git-common-dir"]);
+  if (!result.ok || !result.stdout) return null;
+  const commonDir = firstLine(result.stdout).trim();
+  const absoluteCommonDir = path.isAbsolute(commonDir) ? commonDir : path.resolve(process.cwd(), commonDir);
+  return path.join(absoluteCommonDir, "pi", "git-state");
+}
+
+function remoteCachePath(remoteDir) {
+  return path.join(remoteDir, "remote-cache.json");
+}
+
+function remoteLockPath(remoteDir) {
+  return path.join(remoteDir, "remote-refresh.lock");
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readRemoteCache(remoteDir) {
+  if (!remoteDir) return null;
+  const value = readJsonFile(remoteCachePath(remoteDir));
+  if (!value || typeof value !== "object") return null;
+  if (value.version !== REMOTE_CACHE_VERSION) return null;
+  if (value.strategy !== "git-fetch") return null;
+  if (typeof value.checkedAt !== "number" || !Number.isFinite(value.checkedAt)) return null;
+  return value;
+}
+
+function atomicWriteJson(file, value) {
+  const dir = path.dirname(file);
+  mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  writeFileSync(tmp, `${JSON.stringify(value)}\n`, "utf8");
+  renameSync(tmp, file);
+}
+
+function liveLockInfo(remoteDir, lockTtlMs) {
+  if (!remoteDir) return { live: false };
+  const lockPath = remoteLockPath(remoteDir);
+  if (!existsSync(lockPath)) return { live: false };
+
+  const value = readJsonFile(lockPath);
+  const startedAt = value && typeof value.startedAt === "number" ? value.startedAt : 0;
+  if (startedAt > 0 && Date.now() - startedAt <= lockTtlMs) return { live: true, startedAt };
+
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // Ignore races with another worker.
+  }
+  return { live: false };
+}
+
+function acquireRemoteLock(remoteDir, lockTtlMs) {
+  mkdirSync(remoteDir, { recursive: true });
+  if (liveLockInfo(remoteDir, lockTtlMs).live) return false;
+
+  const lockPath = remoteLockPath(remoteDir);
+  let fd;
+  try {
+    fd = openSync(lockPath, "wx");
+    writeFileSync(fd, `${JSON.stringify({ pid: process.pid, startedAt: Date.now() })}\n`, "utf8");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function releaseRemoteLock(remoteDir) {
+  try {
+    unlinkSync(remoteLockPath(remoteDir));
+  } catch {
+    // Ignore missing/raced lock cleanup.
+  }
+}
+
+function cacheIsStale(cache, options) {
+  if (!cache) return true;
+  const ttl = cache.ok ? options.remoteTtlMs : options.remoteErrorTtlMs;
+  return Date.now() - cache.checkedAt > ttl;
+}
+
+function spawnRemoteRefresh() {
+  try {
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--remote-refresh"], {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function remoteStatusLine(mode, cache, stale, lockLive, refreshStarted) {
+  if (mode === "off") return "off";
+  if (lockLive) return "refreshing";
+  if (stale) {
+    const age = cache?.checkedAt ? ` ${formatAge(Date.now() - cache.checkedAt)}` : "";
+    return refreshStarted ? `stale${age}; refresh started` : `stale${age}`;
+  }
+
+  const age = formatAge(Date.now() - cache.checkedAt);
+  if (cache.ok) return `ok ${age} ago via ${cache.strategy} (${Math.max(0, Math.round(cache.durationMs ?? 0))}ms)`;
+  return `error ${age} ago via ${cache.strategy}: ${compactMessage(cache.error ?? `exit ${cache.exitCode ?? "unknown"}`)}`;
+}
+
+function remoteTrackingLine(mode, cache) {
+  if (mode === "background" && cache?.ok && typeof cache.checkedAt === "number") {
+    return `local refs; last git-state fetch ${formatAge(Date.now() - cache.checkedAt)} ago`;
+  }
+  return "local refs; not freshly fetched by git-state";
+}
+
+function runRemoteRefresh(options) {
+  const remoteDir = getRemoteDir();
+  if (!remoteDir) return 0;
+  if (!acquireRemoteLock(remoteDir, options.remoteLockTtlMs)) return 0;
+
+  const startedAt = Date.now();
+  try {
+    const result = spawnSync("git", ["fetch", "--prune", "--no-tags", "--quiet", "origin"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: options.remoteTimeoutMs,
+      maxBuffer: 128 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+    const checkedAt = Date.now();
+    const error = result.error
+      ? compactMessage(result.error.message ?? result.error)
+      : result.status === 0
+        ? undefined
+        : compactMessage(result.stderr || result.stdout || `exit ${result.status ?? "unknown"}`);
+
+    atomicWriteJson(remoteCachePath(remoteDir), {
+      version: REMOTE_CACHE_VERSION,
+      strategy: "git-fetch",
+      startedAt,
+      checkedAt,
+      durationMs: checkedAt - startedAt,
+      ok: !result.error && result.status === 0,
+      exitCode: typeof result.status === "number" ? result.status : null,
+      ...(error ? { error } : {}),
+    });
+  } finally {
+    releaseRemoteLock(remoteDir);
+  }
+
+  return 0;
+}
+
+function printOutsideGit(reason, optionWarnings, remoteMode) {
   const lines = [
     "git-state",
     "repo:",
     "  insideWorktree: no",
     `  cwd: ${process.cwd()}`,
     `  status: ${reason}`,
-    "  remoteFreshness: not fetched by effect",
+    "  remoteTracking: local refs; not freshly fetched by git-state",
+    `  remoteCheck: ${remoteMode === "off" ? "off" : "unavailable outside worktree"}`,
   ];
+  for (const warning of optionWarnings) lines.push(`  optionsWarning: ${warning}`);
   console.log(lines.join("\n"));
 }
 
+const isRemoteRefresh = process.argv.includes("--remote-refresh");
+const { options: remoteOptions, warnings: optionWarnings } = parseEffectOptions();
+
 const inside = runGit(["rev-parse", "--is-inside-work-tree"]);
 if (!inside.ok || firstLine(inside.stdout).trim() !== "true") {
-  printOutsideGit("not a git worktree");
+  if (!isRemoteRefresh) printOutsideGit("not a git worktree", optionWarnings, remoteOptions.remoteMode);
   process.exit(0);
 }
+
+if (isRemoteRefresh) process.exit(runRemoteRefresh(remoteOptions));
+
+const remoteDir = getRemoteDir();
+const remoteCache = readRemoteCache(remoteDir);
+const remoteStale = remoteOptions.remoteMode === "background" ? cacheIsStale(remoteCache, remoteOptions) : false;
+const remoteLock = remoteOptions.remoteMode === "background" ? liveLockInfo(remoteDir, remoteOptions.remoteLockTtlMs) : { live: false };
+const remoteRefreshStarted = remoteOptions.remoteMode === "background" && remoteStale && !remoteLock.live ? spawnRemoteRefresh() : false;
 
 const rootResult = runGit(["rev-parse", "--show-toplevel"]);
 const repoRoot = rootResult.ok && rootResult.stdout ? firstLine(rootResult.stdout).trim() : process.cwd();
@@ -215,7 +464,9 @@ lines.push(`  upstream: ${upstream}${upstreamCounts ? ` (${formatAheadBehind(ups
 if (upstream === "none" && !isDetached) lines.push(`  publishStatus: no upstream for branch ${branchName}`);
 lines.push(`  origin: ${origin}`);
 lines.push(`  vsDefault: ${defaultBranch === "unknown" ? "unknown" : `HEAD ${formatAheadBehind(defaultCounts)} from ${defaultBranch}`}`);
-lines.push("  remoteFreshness: not fetched by effect");
+lines.push(`  remoteTracking: ${remoteTrackingLine(remoteOptions.remoteMode, remoteCache)}`);
+lines.push(`  remoteCheck: ${remoteStatusLine(remoteOptions.remoteMode, remoteCache, remoteStale, remoteLock.live, remoteRefreshStarted)}`);
+for (const warning of optionWarnings) lines.push(`  optionsWarning: ${warning}`);
 lines.push(`  lastCommit: ${compactSubject(lastCommitResult.ok ? lastCommitResult.stdout : "")}`);
 lines.push(`  stash: ${stashLines.length === 0 ? "none" : `${stashLines.length} (top: ${compactSubject(stashLines[0])})`}`);
 lines.push("workingTree:");

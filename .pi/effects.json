@@ -7,7 +7,14 @@
       "command": "node packages/effect-mode/scripts/git-state.mjs",
       "ttlMs": 0,
       "timeoutMs": 2000,
-      "maxBytes": 12000
+      "maxBytes": 12000,
+      "options": {
+        "remoteMode": "background",
+        "remoteTtlMs": 900000,
+        "remoteErrorTtlMs": 300000,
+        "remoteTimeoutMs": 10000,
+        "remoteLockTtlMs": 120000
+      }
     }
   ]
 }

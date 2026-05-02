@@ -66,6 +66,13 @@
             "type": "boolean",
             "default": true,
             "description": "Disabled effects are omitted from model context and shown as disabled in /effects."
+          },
+          "options": {
+            "type": "object",
+            "description": "Per-effect script options passed only via PI_EFFECT_OPTIONS_JSON. Values must be scalar: string, number, boolean, or null.",
+            "additionalProperties": {
+              "type": ["string", "number", "boolean", "null"]
+            }
           }
         }
       }

@@ -48,8 +48,43 @@ See `examples/effects.json` for a larger example.
 - `timeoutMs` optional, default `3000`.
 - `maxBytes` optional, default `12000`; combined stdout/stderr budget, tail-truncated.
 - `enabled` optional, default `true`.
+- `options` optional object for script-specific settings. Values must be scalar (`string`, `number`, `boolean`, or `null`); arrays and nested objects are rejected.
 
 Unknown fields are rejected. Invalid config blocks all effects and injects a diagnostic message.
+
+## Effect environment
+
+Each command inherits pi's environment plus:
+
+- `PI_EFFECT_ID` effect id.
+- `PI_EFFECT_SCOPE=project`.
+- `PI_EFFECT_CWD` absolute resolved working directory.
+- `PI_EFFECT_OPTIONS_JSON` JSON string of the effect `options` object, or `{}`.
+
+Options are passed only through the child-process environment, not interpolated into the shell command.
+
+## Bundled `git-state` script
+
+`node packages/effect-mode/scripts/git-state.mjs` prints concise local git state. By default it does not fetch:
+
+```text
+remoteTracking: local refs; not freshly fetched by git-state
+remoteCheck: off
+```
+
+Opt into low-latency background remote checks through effect options:
+
+```json
+"options": {
+  "remoteMode": "background",
+  "remoteTtlMs": 900000,
+  "remoteErrorTtlMs": 300000,
+  "remoteTimeoutMs": 15000,
+  "remoteLockTtlMs": 120000
+}
+```
+
+Supported `remoteMode` values are `off` and `background`. Background mode renders immediately from local refs/cache, then starts a detached worker when stale. The worker runs `git fetch --prune --no-tags --quiet origin` with `GIT_TERMINAL_PROMPT=0`, stores concise cache/lock files under the git common dir, and intentionally mutates local remote-tracking refs when opted in.
 
 ## Command
 
@@ -65,7 +100,7 @@ Implemented now:
 
 - project-local `.pi/effects.json`
 - sequential effect execution
-- per-effect TTL, error TTL, timeout, max output bytes
+- per-effect TTL, error TTL, timeout, max output bytes, scalar options
 - one appended ephemeral model-context message
 - `/effects` inspection command
 - JSON Schema at `schemas/effects.schema.json`
@@ -76,3 +111,4 @@ Intentionally deferred:
 - session/agent-created effects
 - script runtimes such as TypeScript/Bun/Node
 - deterministic shell selection
+- `gh`, `git ls-remote`, and synchronous remote checks for `git-state`

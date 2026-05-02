@@ -15,6 +15,8 @@ const DEFAULTS = {
   cwd: "project",
 };
 
+type EffectOptions = Record<string, string | number | boolean | null>;
+
 type EffectConfig = {
   id: string;
   description?: string;
@@ -25,6 +27,7 @@ type EffectConfig = {
   timeoutMs: number;
   maxBytes: number;
   enabled: boolean;
+  options?: EffectOptions;
 };
 
 type EffectResult = {
@@ -115,6 +118,23 @@ function isFresh(entry: CachedResult) {
   return Date.now() - entry.result.finishedAt <= ttl;
 }
 
+function isScalarOptionValue(value: unknown): value is string | number | boolean | null {
+  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+function stableOptionsJson(options: EffectOptions | undefined) {
+  return JSON.stringify(options ?? {});
+}
+
+function sameConfigForCache(a: EffectConfig, b: EffectConfig) {
+  return a.command === b.command && a.cwd === b.cwd && stableOptionsJson(a.options) === stableOptionsJson(b.options);
+}
+
+function formatOptions(options: EffectOptions | undefined) {
+  const json = stableOptionsJson(options);
+  return json.length <= 240 ? json : `${json.slice(0, 237)}...`;
+}
+
 function loadConfig(cwd: string): LoadedConfig {
   const path = resolve(cwd, CONFIG_PATH);
   if (!existsSync(path)) return { ok: true, path: null, effects: [], disabled: [] };
@@ -128,7 +148,7 @@ function loadConfig(cwd: string): LoadedConfig {
 
   const errors: string[] = [];
   const allowedTop = new Set(["$schema", "effects"]);
-  const allowedEffect = new Set(["id", "description", "command", "cwd", "ttlMs", "errorTtlMs", "timeoutMs", "maxBytes", "enabled"]);
+  const allowedEffect = new Set(["id", "description", "command", "cwd", "ttlMs", "errorTtlMs", "timeoutMs", "maxBytes", "enabled", "options"]);
 
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return { ok: false, path, errors: ["Top-level value must be an object."] };
@@ -178,6 +198,18 @@ function loadConfig(cwd: string): LoadedConfig {
       if (typeof obj.timeoutMs === "number" && obj.timeoutMs <= 0) errors.push(`${prefix}.timeoutMs must be greater than 0.`);
       if (typeof obj.maxBytes === "number" && obj.maxBytes <= 0) errors.push(`${prefix}.maxBytes must be greater than 0.`);
       if (obj.enabled !== undefined && typeof obj.enabled !== "boolean") errors.push(`${prefix}.enabled must be a boolean.`);
+      let options: EffectOptions | undefined;
+      if (obj.options !== undefined) {
+        if (!obj.options || typeof obj.options !== "object" || Array.isArray(obj.options)) {
+          errors.push(`${prefix}.options must be an object with scalar values.`);
+        } else {
+          options = {};
+          for (const [key, value] of Object.entries(obj.options as Record<string, unknown>)) {
+            if (!isScalarOptionValue(value)) errors.push(`${prefix}.options.${key} must be a scalar value.`);
+            else options[key] = value;
+          }
+        }
+      }
 
       if (errors.length === 0 || typeof obj.id === "string") {
         const cfg: EffectConfig = {
@@ -190,6 +222,7 @@ function loadConfig(cwd: string): LoadedConfig {
           timeoutMs: typeof obj.timeoutMs === "number" ? obj.timeoutMs : DEFAULTS.timeoutMs,
           maxBytes: typeof obj.maxBytes === "number" ? obj.maxBytes : DEFAULTS.maxBytes,
           enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULTS.enabled,
+          options,
         };
         (cfg.enabled ? effects : disabled).push(cfg);
       }
@@ -207,9 +240,16 @@ function effectCwd(projectCwd: string, cfg: EffectConfig) {
 function executeEffect(projectCwd: string, cfg: EffectConfig): Promise<EffectResult> {
   const startedAt = Date.now();
   return new Promise((resolveResult) => {
+    const cwd = resolve(effectCwd(projectCwd, cfg));
     exec(cfg.command, {
-      cwd: effectCwd(projectCwd, cfg),
-      env: process.env,
+      cwd,
+      env: {
+        ...process.env,
+        PI_EFFECT_ID: cfg.id,
+        PI_EFFECT_SCOPE: "project",
+        PI_EFFECT_CWD: cwd,
+        PI_EFFECT_OPTIONS_JSON: stableOptionsJson(cfg.options),
+      },
       timeout: cfg.timeoutMs,
       maxBuffer: Math.max(cfg.maxBytes * 4, 1024 * 1024),
     }, (error, stdoutRaw, stderrRaw) => {
@@ -241,7 +281,7 @@ async function resolveEffects(projectCwd: string, effects: EffectConfig[]) {
   for (const cfg of effects) {
     const key = `${projectCwd}:${cfg.id}`;
     const cached = cache.get(key);
-    if (cached && cached.config.command === cfg.command && cached.config.cwd === cfg.cwd && isFresh(cached)) {
+    if (cached && sameConfigForCache(cached.config, cfg) && isFresh(cached)) {
       results.push(cached);
       continue;
     }
@@ -253,7 +293,7 @@ async function resolveEffects(projectCwd: string, effects: EffectConfig[]) {
   return results;
 }
 
-function renderEffect(entry: CachedResult, full = true) {
+function renderEffect(entry: CachedResult, full = true, showOptions = false) {
   const { config: cfg, result: r } = entry;
   const lines = [
     `## project:${cfg.id}`,
@@ -266,6 +306,7 @@ function renderEffect(entry: CachedResult, full = true) {
     `exitCode: ${r.exitCode ?? "null"}`,
     `command: ${cfg.command}`,
     `cwd: ${cfg.cwd}`,
+    ...(showOptions && cfg.options && Object.keys(cfg.options).length > 0 ? [`options: ${formatOptions(cfg.options)}`] : []),
     `age: ${age(r)}`,
     `duration: ${formatMs(r.durationMs)}`,
     `ttl: ${formatMs(r.status === "ok" ? cfg.ttlMs : cfg.errorTtlMs)}`,
@@ -299,7 +340,7 @@ async function currentReport(cwd: string) {
   for (const entry of resolved) {
     const icon = entry.result.status === "ok" ? "✓" : "✗";
     summary.push(`${icon} project:${entry.config.id}  ${entry.result.status}  ${age(entry.result)}  ${formatMs(entry.result.durationMs)}`);
-    lastCommandItems.push({ title: `project:${entry.config.id}`, body: renderEffect(entry) });
+    lastCommandItems.push({ title: `project:${entry.config.id}`, body: renderEffect(entry, true, true) });
   }
   for (const cfg of loaded.disabled) {
     summary.push(`- project:${cfg.id}  disabled`);
