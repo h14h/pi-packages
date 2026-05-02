@@ -1,0 +1,11 @@
+{
+  "$schema": "./packages/effect-mode/schemas/effects.schema.json",
+  "effects": [
+    {
+      "id": "workspace-git-status",
+      "description": "Current git branch and working tree status for this pi-packages workspace",
+      "command": "git status --short --branch",
+      "ttlMs": 2000
+    }
+  ]
+}
