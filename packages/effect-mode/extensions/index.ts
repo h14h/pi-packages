@@ -64,6 +64,7 @@ function agentDir() {
 const cache = new Map<string, CachedResult>();
 let lastCommandReport = "";
 let lastCommandItems: Array<{ title: string; body: string; disabled?: boolean }> = [];
+let lastCommandItemLines: number[] = [];
 
 function bytes(s: string) {
   return Buffer.byteLength(s, "utf8");
@@ -363,6 +364,7 @@ function loadConfigs(cwd: string) {
 async function currentReport(cwd: string) {
   const loadedConfigs = loadConfigs(cwd);
   lastCommandItems = [];
+  lastCommandItemLines = [];
   const summary = [`effect-mode`];
 
   for (const loaded of loadedConfigs) {
@@ -381,18 +383,20 @@ async function currentReport(cwd: string) {
     for (const entry of resolved) {
       const icon = entry.result.status === "ok" ? "✓" : "✗";
       const label = `${entry.config.scope}:${entry.config.id}`;
+      lastCommandItemLines.push(summary.length);
       summary.push(`${icon} ${label}  ${entry.result.status}  ${age(entry.result)}  ${formatMs(entry.result.durationMs)}`);
       lastCommandItems.push({ title: label, body: renderEffect(entry, true, true, true) });
     }
     for (const cfg of loaded.disabled) {
       const label = `${cfg.scope}:${cfg.id}`;
+      lastCommandItemLines.push(summary.length);
       summary.push(`- ${label}  disabled`);
       lastCommandItems.push({ title: label, body: `## ${label}\nstatus: disabled\ncommand: ${cfg.command}`, disabled: true });
     }
     if (resolved.length === 0 && loaded.disabled.length === 0) summary.push("No effects configured.");
   }
 
-  summary.push("", "Use ↑/↓ or j/k to select; Ctrl+O or Enter opens selected output; q/Esc closes.");
+  summary.push("", "Use ↑/↓ or j/k to select; Enter opens selected output; q/Esc closes.");
   return summary.join("\n");
 }
 
@@ -405,8 +409,8 @@ async function showEffectsOverlay(ctx: any, report: string) {
         const text = detail ?? report;
         const raw = text.split("\n");
         const lines = raw.map((line, idx) => {
-          if (!detail && lastCommandItems.length && idx >= 3 && idx < 3 + lastCommandItems.length && idx - 3 === selected) {
-            return theme.bg("selection", truncateToWidth(line, width - 2, "…"));
+          if (!detail && lastCommandItemLines[selected] === idx) {
+            return theme.bg("selectedBg", truncateToWidth(line, width - 2, "…"));
           }
           return truncateToWidth(line, width - 2, "…");
         });
@@ -423,7 +427,7 @@ async function showEffectsOverlay(ctx: any, report: string) {
         if (detail) return false;
         if (data === "\u001b[A" || data === "k") { selected = Math.max(0, selected - 1); return true; }
         if (data === "\u001b[B" || data === "j") { selected = Math.min(lastCommandItems.length - 1, selected + 1); return true; }
-        if (data === "\u000f" || data === "\r") { detail = lastCommandItems[selected]?.body ?? null; return true; }
+        if (data === "\r") { detail = lastCommandItems[selected]?.body ?? null; return true; }
         return false;
       },
     };
