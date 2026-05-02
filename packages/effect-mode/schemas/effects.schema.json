@@ -67,6 +67,11 @@
             "default": true,
             "description": "Disabled effects are omitted from model context and shown as disabled in /effects."
           },
+          "includeMetadata": {
+            "type": "boolean",
+            "default": true,
+            "description": "Whether to include effect-mode execution metadata (status, command, cwd, age, duration, ttl) in model context. /effects always shows metadata."
+          },
           "options": {
             "type": "object",
             "description": "Per-effect script options passed only via PI_EFFECT_OPTIONS_JSON. Values must be scalar: string, number, boolean, or null.",

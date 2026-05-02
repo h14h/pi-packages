@@ -8,6 +8,7 @@
       "ttlMs": 0,
       "timeoutMs": 2000,
       "maxBytes": 12000,
+      "includeMetadata": false,
       "options": {
         "remoteMode": "background",
         "remoteTtlMs": 900000,

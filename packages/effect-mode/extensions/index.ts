@@ -27,6 +27,7 @@ type EffectConfig = {
   timeoutMs: number;
   maxBytes: number;
   enabled: boolean;
+  includeMetadata: boolean;
   options?: EffectOptions;
 };
 
@@ -127,7 +128,7 @@ function stableOptionsJson(options: EffectOptions | undefined) {
 }
 
 function sameConfigForCache(a: EffectConfig, b: EffectConfig) {
-  return a.command === b.command && a.cwd === b.cwd && stableOptionsJson(a.options) === stableOptionsJson(b.options);
+  return a.command === b.command && a.cwd === b.cwd && a.includeMetadata === b.includeMetadata && stableOptionsJson(a.options) === stableOptionsJson(b.options);
 }
 
 function formatOptions(options: EffectOptions | undefined) {
@@ -148,7 +149,7 @@ function loadConfig(cwd: string): LoadedConfig {
 
   const errors: string[] = [];
   const allowedTop = new Set(["$schema", "effects"]);
-  const allowedEffect = new Set(["id", "description", "command", "cwd", "ttlMs", "errorTtlMs", "timeoutMs", "maxBytes", "enabled", "options"]);
+  const allowedEffect = new Set(["id", "description", "command", "cwd", "ttlMs", "errorTtlMs", "timeoutMs", "maxBytes", "enabled", "includeMetadata", "options"]);
 
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return { ok: false, path, errors: ["Top-level value must be an object."] };
@@ -198,6 +199,7 @@ function loadConfig(cwd: string): LoadedConfig {
       if (typeof obj.timeoutMs === "number" && obj.timeoutMs <= 0) errors.push(`${prefix}.timeoutMs must be greater than 0.`);
       if (typeof obj.maxBytes === "number" && obj.maxBytes <= 0) errors.push(`${prefix}.maxBytes must be greater than 0.`);
       if (obj.enabled !== undefined && typeof obj.enabled !== "boolean") errors.push(`${prefix}.enabled must be a boolean.`);
+      if (obj.includeMetadata !== undefined && typeof obj.includeMetadata !== "boolean") errors.push(`${prefix}.includeMetadata must be a boolean.`);
       let options: EffectOptions | undefined;
       if (obj.options !== undefined) {
         if (!obj.options || typeof obj.options !== "object" || Array.isArray(obj.options)) {
@@ -222,6 +224,7 @@ function loadConfig(cwd: string): LoadedConfig {
           timeoutMs: typeof obj.timeoutMs === "number" ? obj.timeoutMs : DEFAULTS.timeoutMs,
           maxBytes: typeof obj.maxBytes === "number" ? obj.maxBytes : DEFAULTS.maxBytes,
           enabled: typeof obj.enabled === "boolean" ? obj.enabled : DEFAULTS.enabled,
+          includeMetadata: typeof obj.includeMetadata === "boolean" ? obj.includeMetadata : true,
           options,
         };
         (cfg.enabled ? effects : disabled).push(cfg);
@@ -293,8 +296,18 @@ async function resolveEffects(projectCwd: string, effects: EffectConfig[]) {
   return results;
 }
 
-function renderEffect(entry: CachedResult, full = true, showOptions = false) {
+function renderEffect(entry: CachedResult, full = true, showOptions = false, forceMetadata = false) {
   const { config: cfg, result: r } = entry;
+  if (!forceMetadata && !cfg.includeMetadata && full && r.status === "ok") {
+    const lines = [`## project:${cfg.id}`];
+    if (cfg.description) lines.push(`description: ${cfg.description}`);
+    if (r.stdout) lines.push("", r.stdout.trimEnd());
+    if (r.stderr) lines.push("", "stderr:", "```text", r.stderr.trimEnd(), "```");
+    if (!r.stdout && !r.stderr) lines.push("", "[no output]");
+    if (r.truncated) lines.push("", `[output truncated to ${r.renderedBytes}/${r.originalBytes} bytes]`);
+    return lines.join("\n");
+  }
+
   const lines = [
     `## project:${cfg.id}`,
     `id: ${cfg.id}`,
@@ -340,7 +353,7 @@ async function currentReport(cwd: string) {
   for (const entry of resolved) {
     const icon = entry.result.status === "ok" ? "✓" : "✗";
     summary.push(`${icon} project:${entry.config.id}  ${entry.result.status}  ${age(entry.result)}  ${formatMs(entry.result.durationMs)}`);
-    lastCommandItems.push({ title: `project:${entry.config.id}`, body: renderEffect(entry, true, true) });
+    lastCommandItems.push({ title: `project:${entry.config.id}`, body: renderEffect(entry, true, true, true) });
   }
   for (const cfg of loaded.disabled) {
     summary.push(`- project:${cfg.id}  disabled`);

@@ -48,6 +48,7 @@ See `examples/effects.json` for a larger example.
 - `timeoutMs` optional, default `3000`.
 - `maxBytes` optional, default `12000`; combined stdout/stderr budget, tail-truncated.
 - `enabled` optional, default `true`.
+- `includeMetadata` optional, default `true`; set `false` to omit effect-mode execution metadata from model context for successful effects. `/effects` always shows metadata.
 - `options` optional object for script-specific settings. Values must be scalar (`string`, `number`, `boolean`, or `null`); arrays and nested objects are rejected.
 
 Unknown fields are rejected. Invalid config blocks all effects and injects a diagnostic message.
@@ -100,7 +101,7 @@ Implemented now:
 
 - project-local `.pi/effects.json`
 - sequential effect execution
-- per-effect TTL, error TTL, timeout, max output bytes, scalar options
+- per-effect TTL, error TTL, timeout, max output bytes, metadata display control, scalar options
 - one appended ephemeral model-context message
 - `/effects` inspection command
 - JSON Schema at `schemas/effects.schema.json`
