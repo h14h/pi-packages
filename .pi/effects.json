@@ -3,6 +3,7 @@
   "effects": [
     {
       "id": "git-state",
+      "about": "Current local git state for this workspace.",
       "description": "Concise local git state snapshot for this pi-packages workspace",
       "command": "node packages/effect-mode/scripts/git-state.mjs",
       "ttlMs": 0,
