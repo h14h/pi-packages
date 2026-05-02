@@ -10,10 +10,10 @@
       "maxBytes": 12000,
       "options": {
         "remoteMode": "background",
-        "remoteTtlMs": 900000,
-        "remoteErrorTtlMs": 300000,
+        "remoteTtlMs": 60000,
+        "remoteErrorTtlMs": 60000,
         "remoteTimeoutMs": 10000,
-        "remoteLockTtlMs": 120000
+        "remoteLockTtlMs": 60000
       }
     }
   ]
