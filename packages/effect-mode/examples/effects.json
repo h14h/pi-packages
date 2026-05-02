@@ -1,0 +1,18 @@
+{
+  "$schema": "../schemas/effects.schema.json",
+  "effects": [
+    {
+      "id": "git-status",
+      "description": "Current git branch and working tree status",
+      "command": "git status --short --branch",
+      "ttlMs": 2000
+    },
+    {
+      "id": "workspace-files",
+      "description": "Top-level workspace files",
+      "command": "find . -maxdepth 2 -type f | sort | head -80",
+      "ttlMs": 30000,
+      "maxBytes": 8000
+    }
+  ]
+}
