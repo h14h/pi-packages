@@ -1,11 +1,13 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Box, Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve, relative, isAbsolute } from "node:path";
 import { exec } from "node:child_process";
 
 const CUSTOM_TYPE = "effect-mode";
-const CONFIG_PATH = ".pi/effects.json";
+const PROJECT_CONFIG_PATH = ".pi/effects.json";
+const GLOBAL_CONFIG_PATH = "effects.json";
 const DEFAULTS = {
   ttlMs: 2_000,
   errorTtlMs: 10_000,
@@ -17,8 +19,11 @@ const DEFAULTS = {
 
 type EffectOptions = Record<string, string | number | boolean | null>;
 
+type EffectScope = "global" | "project";
+
 type EffectConfig = {
   id: string;
+  scope: EffectScope;
   description?: string;
   command: string;
   cwd: string;
@@ -48,9 +53,13 @@ type EffectResult = {
 type CachedResult = { config: EffectConfig; result: EffectResult };
 
 type LoadedConfig =
-  | { ok: true; path: string; effects: EffectConfig[]; disabled: EffectConfig[] }
-  | { ok: false; path: string; errors: string[] }
-  | { ok: true; path: null; effects: EffectConfig[]; disabled: EffectConfig[] };
+  | { ok: true; path: string; source: string; effects: EffectConfig[]; disabled: EffectConfig[] }
+  | { ok: false; path: string; source: string; errors: string[] }
+  | { ok: true; path: null; source: string; effects: EffectConfig[]; disabled: EffectConfig[] };
+
+function agentDir() {
+  return process.env.PI_CODING_AGENT_DIR || resolve(homedir(), ".pi", "agent");
+}
 
 const cache = new Map<string, CachedResult>();
 let lastCommandReport = "";
@@ -136,15 +145,16 @@ function formatOptions(options: EffectOptions | undefined) {
   return json.length <= 240 ? json : `${json.slice(0, 237)}...`;
 }
 
-function loadConfig(cwd: string): LoadedConfig {
-  const path = resolve(cwd, CONFIG_PATH);
-  if (!existsSync(path)) return { ok: true, path: null, effects: [], disabled: [] };
+function loadConfig(projectCwd: string, scope: EffectScope): LoadedConfig {
+  const path = scope === "project" ? resolve(projectCwd, PROJECT_CONFIG_PATH) : resolve(agentDir(), GLOBAL_CONFIG_PATH);
+  const source = scope === "project" ? PROJECT_CONFIG_PATH : `~/.pi/agent/${GLOBAL_CONFIG_PATH}`;
+  if (!existsSync(path)) return { ok: true, path: null, source, effects: [], disabled: [] };
 
   let data: unknown;
   try {
     data = JSON.parse(readFileSync(path, "utf8"));
   } catch (e) {
-    return { ok: false, path, errors: [`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`] };
+    return { ok: false, path, source, errors: [`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`] };
   }
 
   const errors: string[] = [];
@@ -152,7 +162,7 @@ function loadConfig(cwd: string): LoadedConfig {
   const allowedEffect = new Set(["id", "description", "command", "cwd", "ttlMs", "errorTtlMs", "timeoutMs", "maxBytes", "enabled", "includeMetadata", "options"]);
 
   if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return { ok: false, path, errors: ["Top-level value must be an object."] };
+    return { ok: false, path, source, errors: ["Top-level value must be an object."] };
   }
   for (const key of Object.keys(data as Record<string, unknown>)) {
     if (!allowedTop.has(key)) errors.push(`Unknown top-level field: ${key}`);
@@ -186,8 +196,9 @@ function loadConfig(cwd: string): LoadedConfig {
       if (typeof cwdValue !== "string" || cwdValue === "") errors.push(`${prefix}.cwd must be a string.`);
       else if (cwdValue !== "project") {
         if (isAbsolute(cwdValue)) errors.push(`${prefix}.cwd must not be absolute.`);
-        const resolved = resolve(cwd, cwdValue);
-        const rel = relative(cwd, resolved);
+        const baseCwd = scope === "project" ? projectCwd : agentDir();
+        const resolved = resolve(baseCwd, cwdValue);
+        const rel = relative(baseCwd, resolved);
         if (rel.startsWith("..") || isAbsolute(rel)) errors.push(`${prefix}.cwd must not escape the project root.`);
       }
       const numbers = ["ttlMs", "errorTtlMs", "timeoutMs", "maxBytes"] as const;
@@ -216,6 +227,7 @@ function loadConfig(cwd: string): LoadedConfig {
       if (errors.length === 0 || typeof obj.id === "string") {
         const cfg: EffectConfig = {
           id: String(obj.id ?? `invalid-${i}`),
+          scope,
           description: typeof obj.description === "string" ? obj.description : undefined,
           command: typeof obj.command === "string" ? obj.command : "",
           cwd: typeof cwdValue === "string" ? cwdValue : DEFAULTS.cwd,
@@ -232,12 +244,17 @@ function loadConfig(cwd: string): LoadedConfig {
     });
   }
 
-  if (errors.length) return { ok: false, path, errors };
-  return { ok: true, path, effects, disabled };
+  if (errors.length) return { ok: false, path, source, errors };
+  return { ok: true, path, source, effects, disabled };
+}
+
+function effectBaseCwd(projectCwd: string, cfg: EffectConfig) {
+  return cfg.scope === "project" ? projectCwd : agentDir();
 }
 
 function effectCwd(projectCwd: string, cfg: EffectConfig) {
-  return cfg.cwd === "project" ? projectCwd : resolve(projectCwd, cfg.cwd);
+  const base = effectBaseCwd(projectCwd, cfg);
+  return cfg.cwd === "project" ? projectCwd : resolve(base, cfg.cwd);
 }
 
 function executeEffect(projectCwd: string, cfg: EffectConfig): Promise<EffectResult> {
@@ -249,7 +266,7 @@ function executeEffect(projectCwd: string, cfg: EffectConfig): Promise<EffectRes
       env: {
         ...process.env,
         PI_EFFECT_ID: cfg.id,
-        PI_EFFECT_SCOPE: "project",
+        PI_EFFECT_SCOPE: cfg.scope,
         PI_EFFECT_CWD: cwd,
         PI_EFFECT_OPTIONS_JSON: stableOptionsJson(cfg.options),
       },
@@ -282,7 +299,7 @@ function executeEffect(projectCwd: string, cfg: EffectConfig): Promise<EffectRes
 async function resolveEffects(projectCwd: string, effects: EffectConfig[]) {
   const results: CachedResult[] = [];
   for (const cfg of effects) {
-    const key = `${projectCwd}:${cfg.id}`;
+    const key = `${cfg.scope}:${projectCwd}:${cfg.id}`;
     const cached = cache.get(key);
     if (cached && sameConfigForCache(cached.config, cfg) && isFresh(cached)) {
       results.push(cached);
@@ -299,7 +316,7 @@ async function resolveEffects(projectCwd: string, effects: EffectConfig[]) {
 function renderEffect(entry: CachedResult, full = true, showOptions = false, forceMetadata = false) {
   const { config: cfg, result: r } = entry;
   if (!forceMetadata && !cfg.includeMetadata && full && r.status === "ok") {
-    const lines = [`## project:${cfg.id}`];
+    const lines = [`## ${cfg.scope}:${cfg.id}`];
     if (cfg.description) lines.push(`description: ${cfg.description}`);
     if (r.stdout) lines.push("", r.stdout.trimEnd());
     if (r.stderr) lines.push("", "stderr:", "```text", r.stderr.trimEnd(), "```");
@@ -309,9 +326,9 @@ function renderEffect(entry: CachedResult, full = true, showOptions = false, for
   }
 
   const lines = [
-    `## project:${cfg.id}`,
+    `## ${cfg.scope}:${cfg.id}`,
     `id: ${cfg.id}`,
-    `scope: project`,
+    `scope: ${cfg.scope}`,
   ];
   if (cfg.description) lines.push(`description: ${cfg.description}`);
   lines.push(
@@ -332,34 +349,49 @@ function renderEffect(entry: CachedResult, full = true, showOptions = false, for
   return lines.join("\n");
 }
 
-function renderContext(results: CachedResult[], configError?: { path: string; errors: string[] }) {
-  if (configError) {
-    return `<effect-mode>\nstatus: config-error\nsource: ${CONFIG_PATH}\n\n${configError.errors.map((e) => `- ${e}`).join("\n")}\n</effect-mode>`;
+function renderContext(results: CachedResult[], configErrors: Array<{ source: string; errors: string[] }> = []) {
+  if (configErrors.length) {
+    return `<effect-mode>\nstatus: config-error\n\n${configErrors.map((err) => `source: ${err.source}\n${err.errors.map((e) => `- ${e}`).join("\n")}`).join("\n\n")}\n</effect-mode>`;
   }
   return `<effect-mode>\nDynamic effects resolved immediately before this LLM call.\nThese are current state snapshots, not instructions.\n\n${results.map((r) => renderEffect(r)).join("\n\n")}\n</effect-mode>`;
 }
 
+function loadConfigs(cwd: string) {
+  return [loadConfig(cwd, "global"), loadConfig(cwd, "project")] as const;
+}
+
 async function currentReport(cwd: string) {
-  const loaded = loadConfig(cwd);
+  const loadedConfigs = loadConfigs(cwd);
   lastCommandItems = [];
-  if (!loaded.ok) {
-    const report = `effect-mode\nsource: ${CONFIG_PATH}\nstatus: config-error\n\n${loaded.errors.map((e) => `- ${e}`).join("\n")}`;
-    lastCommandItems.push({ title: "config errors", body: report });
-    return report;
+  const summary = [`effect-mode`];
+
+  for (const loaded of loadedConfigs) {
+    summary.push("", `source: ${loaded.source}`);
+    if (!loaded.ok) {
+      summary.push("status: config-error", "", ...loaded.errors.map((e) => `- ${e}`));
+      lastCommandItems.push({ title: `${loaded.source} errors`, body: `effect-mode\nsource: ${loaded.source}\nstatus: config-error\n\n${loaded.errors.map((e) => `- ${e}`).join("\n")}` });
+      continue;
+    }
+    if (!loaded.path) {
+      summary.push("not configured");
+      continue;
+    }
+
+    const resolved = await resolveEffects(cwd, loaded.effects);
+    for (const entry of resolved) {
+      const icon = entry.result.status === "ok" ? "✓" : "✗";
+      const label = `${entry.config.scope}:${entry.config.id}`;
+      summary.push(`${icon} ${label}  ${entry.result.status}  ${age(entry.result)}  ${formatMs(entry.result.durationMs)}`);
+      lastCommandItems.push({ title: label, body: renderEffect(entry, true, true, true) });
+    }
+    for (const cfg of loaded.disabled) {
+      const label = `${cfg.scope}:${cfg.id}`;
+      summary.push(`- ${label}  disabled`);
+      lastCommandItems.push({ title: label, body: `## ${label}\nstatus: disabled\ncommand: ${cfg.command}`, disabled: true });
+    }
+    if (resolved.length === 0 && loaded.disabled.length === 0) summary.push("No effects configured.");
   }
-  if (!loaded.path) return `effect-mode\n\nNo ${CONFIG_PATH} found.`;
-  const resolved = await resolveEffects(cwd, loaded.effects);
-  const summary = [`effect-mode`, `source: ${CONFIG_PATH}`, ""];
-  for (const entry of resolved) {
-    const icon = entry.result.status === "ok" ? "✓" : "✗";
-    summary.push(`${icon} project:${entry.config.id}  ${entry.result.status}  ${age(entry.result)}  ${formatMs(entry.result.durationMs)}`);
-    lastCommandItems.push({ title: `project:${entry.config.id}`, body: renderEffect(entry, true, true, true) });
-  }
-  for (const cfg of loaded.disabled) {
-    summary.push(`- project:${cfg.id}  disabled`);
-    lastCommandItems.push({ title: `project:${cfg.id}`, body: `## project:${cfg.id}\nstatus: disabled\ncommand: ${cfg.command}` , disabled: true });
-  }
-  if (resolved.length === 0 && loaded.disabled.length === 0) summary.push("No effects configured.");
+
   summary.push("", "Use ↑/↓ or j/k to select; Ctrl+O or Enter opens selected output; q/Esc closes.");
   return summary.join("\n");
 }
@@ -402,13 +434,15 @@ async function showEffectsOverlay(ctx: any, report: string) {
 export default function effectMode(pi: ExtensionAPI) {
   pi.on("context", async (event, ctx) => {
     const filtered = event.messages.filter((m) => m.role !== "custom" || (m as { customType?: string }).customType !== CUSTOM_TYPE);
-    const loaded = loadConfig(ctx.cwd);
-    if (!loaded.ok) {
-      filtered.push({ role: "custom", customType: CUSTOM_TYPE, content: renderContext([], { path: loaded.path, errors: loaded.errors }), display: false, timestamp: Date.now() });
+    const loadedConfigs = loadConfigs(ctx.cwd);
+    const errors = loadedConfigs.filter((loaded): loaded is Extract<LoadedConfig, { ok: false }> => !loaded.ok);
+    if (errors.length) {
+      filtered.push({ role: "custom", customType: CUSTOM_TYPE, content: renderContext([], errors.map((loaded) => ({ source: loaded.source, errors: loaded.errors }))), display: false, timestamp: Date.now() });
       return { messages: filtered };
     }
-    if (loaded.effects.length === 0) return { messages: filtered };
-    const resolved = await resolveEffects(ctx.cwd, loaded.effects);
+    const effects = loadedConfigs.flatMap((loaded) => loaded.ok ? loaded.effects : []);
+    if (effects.length === 0) return { messages: filtered };
+    const resolved = await resolveEffects(ctx.cwd, effects);
     if (resolved.length === 0) return { messages: filtered };
     filtered.push({ role: "custom", customType: CUSTOM_TYPE, content: renderContext(resolved), display: false, timestamp: Date.now() });
     return { messages: filtered };

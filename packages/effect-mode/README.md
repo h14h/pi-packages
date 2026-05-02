@@ -4,7 +4,7 @@
 
 Dynamic context resolver effects for pi.
 
-`effect-mode` reads project-local `.pi/effects.json`, executes enabled shell effects before each LLM call when their cache is stale, and appends one ephemeral `<effect-mode>` context message containing current snapshots. Old effect-mode messages are stripped from context, so stale outputs do not accumulate in conversation history.
+`effect-mode` reads global `~/.pi/agent/effects.json` and project-local `.pi/effects.json`, executes enabled shell effects before each LLM call when their cache is stale, and appends one ephemeral `<effect-mode>` context message containing current snapshots. Old effect-mode messages are stripped from context, so stale outputs do not accumulate in conversation history.
 
 ## Install locally
 
@@ -20,7 +20,7 @@ pi install ./packages/effect-mode
 
 ## Configure
 
-Create `.pi/effects.json` in a project:
+Create `.pi/effects.json` in a project, or `~/.pi/agent/effects.json` for global effects available in every project:
 
 ```json
 {
@@ -42,7 +42,7 @@ See `examples/effects.json` for a larger example.
 - `id` required, unique, slug-like.
 - `command` required shell command.
 - `description` optional.
-- `cwd` optional, defaults to `project`; may be `project` or a relative path inside the project root.
+- `cwd` optional, defaults to `project`; may be `project` or a relative path. Project effects resolve relative paths inside the project root. Global effects resolve relative paths inside the pi agent config directory (`~/.pi/agent`, or `PI_CODING_AGENT_DIR` when set).
 - `ttlMs` optional, default `2000`; `0` executes on every LLM call.
 - `errorTtlMs` optional, default `10000`.
 - `timeoutMs` optional, default `3000`.
@@ -58,7 +58,7 @@ Unknown fields are rejected. Invalid config blocks all effects and injects a dia
 Each command inherits pi's environment plus:
 
 - `PI_EFFECT_ID` effect id.
-- `PI_EFFECT_SCOPE=project`.
+- `PI_EFFECT_SCOPE` effect scope: `global` or `project`.
 - `PI_EFFECT_CWD` absolute resolved working directory.
 - `PI_EFFECT_OPTIONS_JSON` JSON string of the effect `options` object, or `{}`.
 
@@ -99,7 +99,7 @@ Effects execute arbitrary shell commands through the platform shell with pi's in
 
 Implemented now:
 
-- project-local `.pi/effects.json`
+- global `~/.pi/agent/effects.json` and project-local `.pi/effects.json`
 - sequential effect execution
 - per-effect TTL, error TTL, timeout, max output bytes, metadata display control, scalar options
 - one appended ephemeral model-context message
@@ -108,7 +108,6 @@ Implemented now:
 
 Intentionally deferred:
 
-- global user effects
 - session/agent-created effects
 - script runtimes such as TypeScript/Bun/Node
 - deterministic shell selection
