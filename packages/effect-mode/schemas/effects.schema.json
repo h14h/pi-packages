@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/effect-mode/effects.schema.json",
+  "title": "effect-mode project effects",
+  "description": "Project-local dynamic context effects for the pi effect-mode package.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["effects"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema URI for editor/LSP hints."
+    },
+    "effects": {
+      "type": "array",
+      "description": "Effects are executed sequentially in array order when stale, then rendered into the model context.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "command"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$",
+            "description": "Unique memorable effect id. Duplicate ids are invalid, even for disabled effects."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional human/model-readable explanation of what the effect captures."
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Shell command executed with the platform shell and inherited pi environment."
+          },
+          "cwd": {
+            "type": "string",
+            "default": "project",
+            "description": "Working directory. Use 'project' for pi's cwd, or a relative path within the project root. Absolute and escaping paths are rejected."
+          },
+          "ttlMs": {
+            "type": "number",
+            "minimum": 0,
+            "default": 2000,
+            "description": "Successful-result cache TTL in milliseconds. 0 means execute on every LLM call."
+          },
+          "errorTtlMs": {
+            "type": "number",
+            "minimum": 0,
+            "default": 10000,
+            "description": "Failed-result cache TTL in milliseconds. 0 means retry failures on every LLM call."
+          },
+          "timeoutMs": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 3000,
+            "description": "Per-effect command timeout in milliseconds."
+          },
+          "maxBytes": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "default": 12000,
+            "description": "Combined stdout/stderr render budget per effect. Tail truncation is used when output is too large."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Disabled effects are omitted from model context and shown as disabled in /effects."
+          },
+          "options": {
+            "type": "object",
+            "description": "Per-effect script options passed only via PI_EFFECT_OPTIONS_JSON. Values must be scalar: string, number, boolean, or null.",
+            "additionalProperties": {
+              "type": ["string", "number", "boolean", "null"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

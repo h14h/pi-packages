@@ -1,0 +1,30 @@
+{
+  "name": "effect-mode",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Dynamic context resolver effects for pi",
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
+  "license": "MIT",
+  "files": [
+    "extensions",
+    "schemas",
+    "scripts",
+    "examples",
+    "tsconfig.json",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  }
+}
