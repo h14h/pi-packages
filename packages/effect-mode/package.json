@@ -11,6 +11,7 @@
   "files": [
     "extensions",
     "schemas",
+    "scripts",
     "examples",
     "tsconfig.json",
     "README.md",
