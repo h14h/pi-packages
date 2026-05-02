@@ -393,26 +393,212 @@ function runRemoteRefresh(options) {
   return 0;
 }
 
-function printOutsideGit(reason, optionWarnings, remoteMode) {
+function remoteCompactLine(mode, cache, stale, lockLive, refreshStarted) {
+  if (mode === "off") return "local refs only; no remote refresh configured";
+  if (!cache || typeof cache.checkedAt !== "number") {
+    if (lockLive) return "refreshing; no remote refresh cache";
+    if (stale) return refreshStarted ? "refs stale; refresh started" : "refs stale";
+    return "local refs only; no remote refresh cache";
+  }
+
+  const age = formatAge(Date.now() - cache.checkedAt);
+  const failure = !cache.ok ? `last check failed ${age} ago via ${cache.strategy}: ${compactMessage(cache.error ?? `exit ${cache.exitCode ?? "unknown"}`)}` : "";
+  if (lockLive) return failure ? `refreshing; ${failure}` : "refreshing";
+  if (stale) {
+    if (failure) return refreshStarted ? `${failure}; refresh started` : failure;
+    return refreshStarted ? `refs stale ${age} ago; refresh started` : `refs stale ${age} ago`;
+  }
+
+  if (cache.ok) return `checked ${age} ago via ${cache.strategy}`;
+  return failure;
+}
+
+function compactUpstream(upstream, counts) {
+  if (upstream === "none") return "none";
+  if (!counts) return `${upstream}, sync unknown`;
+  if (counts.ahead === 0 && counts.behind === 0) return `${upstream}, up-to-date`;
+  const parts = [];
+  if (counts.ahead > 0) parts.push(`ahead ${counts.ahead}`);
+  if (counts.behind > 0) parts.push(`behind ${counts.behind}`);
+  return `${upstream}, ${parts.join(", ")}`;
+}
+
+function printOutsideGit(reason, optionWarnings, remoteMode, verbose) {
+  if (verbose) {
+    const lines = [
+      "git-state",
+      "repo:",
+      "  insideWorktree: no",
+      `  cwd: ${process.cwd()}`,
+      `  status: ${reason}`,
+      "  remoteTracking: local refs; not freshly fetched by git-state",
+      `  remoteCheck: ${remoteMode === "off" ? "off" : "unavailable outside worktree"}`,
+    ];
+    for (const warning of optionWarnings) lines.push(`  optionsWarning: ${warning}`);
+    console.log(lines.join("\n"));
+    return;
+  }
+
   const lines = [
-    "git-state",
-    "repo:",
-    "  insideWorktree: no",
+    "git:",
+    "  status: not a git worktree",
     `  cwd: ${process.cwd()}`,
-    `  status: ${reason}`,
-    "  remoteTracking: local refs; not freshly fetched by git-state",
-    `  remoteCheck: ${remoteMode === "off" ? "off" : "unavailable outside worktree"}`,
   ];
+  if (reason && reason !== "not a git worktree") lines.push(`  reason: ${reason}`);
+  if (remoteMode === "background") lines.push("  remote: unavailable outside worktree");
   for (const warning of optionWarnings) lines.push(`  optionsWarning: ${warning}`);
   console.log(lines.join("\n"));
 }
 
+function renderDebugGitState({
+  repoRoot,
+  branchName,
+  isDetached,
+  head,
+  upstream,
+  upstreamCounts,
+  origin,
+  defaultBranch,
+  defaultCounts,
+  remoteOptions,
+  remoteCache,
+  remoteStale,
+  remoteLock,
+  remoteRefreshStarted,
+  optionWarnings,
+  lastCommitResult,
+  stashLines,
+  status,
+  dirty,
+  currentWorktree,
+  linkedWorktrees,
+  totalLinkedWorktrees,
+}) {
+  const lines = [];
+  lines.push("git-state");
+  lines.push("repo:");
+  lines.push("  insideWorktree: yes");
+  lines.push(`  root: ${compactPath(repoRoot, repoRoot)}`);
+  lines.push(`  cwd: ${compactPath(process.cwd(), repoRoot)}`);
+  lines.push(`  branch: ${isDetached ? `detached ${head}` : branchName}`);
+  lines.push(`  head: ${head}`);
+  lines.push(`  upstream: ${upstream}${upstreamCounts ? ` (${formatAheadBehind(upstreamCounts)})` : upstream === "none" ? "" : " (unknown)"}`);
+  if (upstream === "none" && !isDetached) lines.push(`  publishStatus: no upstream for branch ${branchName}`);
+  lines.push(`  origin: ${origin}`);
+  lines.push(`  vsDefault: ${defaultBranch === "unknown" ? "unknown" : `HEAD ${formatAheadBehind(defaultCounts)} from ${defaultBranch}`}`);
+  lines.push(`  remoteTracking: ${remoteTrackingLine(remoteOptions.remoteMode, remoteCache)}`);
+  lines.push(`  remoteCheck: ${remoteStatusLine(remoteOptions.remoteMode, remoteCache, remoteStale, remoteLock.live, remoteRefreshStarted)}`);
+  for (const warning of optionWarnings) lines.push(`  optionsWarning: ${warning}`);
+  lines.push(`  lastCommit: ${compactSubject(lastCommitResult.ok ? lastCommitResult.stdout : "")}`);
+  lines.push(`  stash: ${stashLines.length === 0 ? "none" : `${stashLines.length} (top: ${compactSubject(stashLines[0])})`}`);
+  lines.push("workingTree:");
+  lines.push(`  state: ${dirty ? "dirty" : "clean"}`);
+  lines.push(`  counts: staged ${status.counts.staged}, modified ${status.counts.modified}, untracked ${status.counts.untracked}, deleted ${status.counts.deleted}, conflicts ${status.counts.conflicts}`);
+  if (status.entries.length === 0) {
+    lines.push("  changedFiles: none");
+  } else {
+    const shown = status.entries.slice(0, STATUS_LIST_LIMIT);
+    lines.push(`  changedFiles (${shown.length}/${status.entries.length}):`);
+    for (const entry of shown) lines.push(`    ${entry.render}`);
+    if (status.entries.length > shown.length) lines.push(`    ... ${status.entries.length - shown.length} more not shown`);
+
+    const shownConflicts = new Set(shown.filter((entry) => entry.isConflict).map((entry) => entry.file));
+    const hiddenConflicts = status.entries.filter((entry) => entry.isConflict && !shownConflicts.has(entry.file));
+    if (hiddenConflicts.length > 0) {
+      lines.push(`  conflictFiles (${hiddenConflicts.length} hidden above):`);
+      for (const entry of hiddenConflicts) lines.push(`    ${entry.render}`);
+    }
+  }
+  lines.push("worktrees:");
+  lines.push(`  ${formatWorktreeRow("current", currentWorktree, repoRoot, dirty)}`);
+  if (totalLinkedWorktrees === 0) {
+    lines.push("  linked: none");
+  } else {
+    lines.push(`  linked (${linkedWorktrees.length}/${totalLinkedWorktrees}):`);
+    for (const wt of linkedWorktrees) lines.push(`    ${formatWorktreeRow("linked", wt, repoRoot)}`);
+    if (totalLinkedWorktrees > linkedWorktrees.length) lines.push(`    ... ${totalLinkedWorktrees - linkedWorktrees.length} more not shown`);
+  }
+  return lines.join("\n");
+}
+
+function renderCompactGitState({
+  repoRoot,
+  branchName,
+  isDetached,
+  head,
+  upstream,
+  upstreamCounts,
+  origin,
+  defaultBranch,
+  defaultCounts,
+  remoteOptions,
+  remoteCache,
+  remoteStale,
+  remoteLock,
+  remoteRefreshStarted,
+  optionWarnings,
+  lastCommitResult,
+  stashLines,
+  status,
+  dirty,
+  linkedWorktrees,
+  totalLinkedWorktrees,
+}) {
+  const lines = [];
+  lines.push("git:");
+  const cwd = compactPath(process.cwd(), repoRoot);
+  if (cwd !== ".") lines.push(`  cwd: ${cwd}`);
+  lines.push(`  branch: ${isDetached ? `detached ${head}` : branchName}`);
+  lines.push(`  head: ${head}`);
+  lines.push(`  upstream: ${compactUpstream(upstream, upstreamCounts)}`);
+  if (upstream === "none" && !isDetached) lines.push(`  publishStatus: no upstream for branch ${branchName}`);
+  if (origin === "none") lines.push("  origin: none");
+  if (defaultBranch === "unknown") {
+    lines.push("  defaultBranch: unknown");
+  } else if (defaultCounts && (defaultCounts.ahead !== 0 || defaultCounts.behind !== 0) && defaultBranch !== upstream) {
+    lines.push(`  vsDefault: ${formatAheadBehind(defaultCounts)} from ${defaultBranch}`);
+  }
+  lines.push(`  remote: ${remoteCompactLine(remoteOptions.remoteMode, remoteCache, remoteStale, remoteLock.live, remoteRefreshStarted)}`);
+  for (const warning of optionWarnings) lines.push(`  optionsWarning: ${warning}`);
+  lines.push(`  workingTree: ${dirty ? "dirty" : "clean"}`);
+  if (dirty) {
+    const countParts = [];
+    if (status.counts.staged) countParts.push(`staged ${status.counts.staged}`);
+    if (status.counts.modified) countParts.push(`modified ${status.counts.modified}`);
+    if (status.counts.untracked) countParts.push(`untracked ${status.counts.untracked}`);
+    if (status.counts.deleted) countParts.push(`deleted ${status.counts.deleted}`);
+    if (status.counts.conflicts) countParts.push(`conflicts ${status.counts.conflicts}`);
+    if (countParts.length > 0) lines.push(`  changes: ${countParts.join(", ")}`);
+
+    const shown = status.entries.slice(0, STATUS_LIST_LIMIT);
+    lines.push(`  changedFiles (${shown.length}/${status.entries.length}):`);
+    for (const entry of shown) lines.push(`    - ${entry.render}`);
+    if (status.entries.length > shown.length) lines.push(`    - ... ${status.entries.length - shown.length} more not shown`);
+
+    const shownConflicts = new Set(shown.filter((entry) => entry.isConflict).map((entry) => entry.file));
+    const hiddenConflicts = status.entries.filter((entry) => entry.isConflict && !shownConflicts.has(entry.file));
+    if (hiddenConflicts.length > 0) {
+      lines.push(`  conflictFiles (${hiddenConflicts.length} hidden above):`);
+      for (const entry of hiddenConflicts) lines.push(`    - ${entry.render}`);
+    }
+  }
+  lines.push(`  lastCommit: ${compactSubject(lastCommitResult.ok ? lastCommitResult.stdout : "")}`);
+  if (stashLines.length > 0) lines.push(`  stash: ${stashLines.length} (top: ${compactSubject(stashLines[0])})`);
+  if (totalLinkedWorktrees > 0) {
+    lines.push(`  linkedWorktrees (${linkedWorktrees.length}/${totalLinkedWorktrees}):`);
+    for (const wt of linkedWorktrees) lines.push(`    - path=${compactPath(wt.path, repoRoot)} ${wt.branch ? `branch=${wt.branch}` : "detached=yes"} head=${shortSha(wt.head)}`);
+    if (totalLinkedWorktrees > linkedWorktrees.length) lines.push(`    - ... ${totalLinkedWorktrees - linkedWorktrees.length} more not shown`);
+  }
+  return lines.join("\n");
+}
+
 const isRemoteRefresh = process.argv.includes("--remote-refresh");
+const verbose = process.argv.includes("--debug") || process.argv.includes("--verbose");
 const { options: remoteOptions, warnings: optionWarnings } = parseEffectOptions();
 
 const inside = runGit(["rev-parse", "--is-inside-work-tree"]);
 if (!inside.ok || firstLine(inside.stdout).trim() !== "true") {
-  if (!isRemoteRefresh) printOutsideGit("not a git worktree", optionWarnings, remoteOptions.remoteMode);
+  if (!isRemoteRefresh) printOutsideGit("not a git worktree", optionWarnings, remoteOptions.remoteMode, verbose);
   process.exit(0);
 }
 
@@ -452,49 +638,29 @@ const currentWorktree = worktrees.find((wt) => samePath(wt.path, repoRoot)) ?? {
 const linkedWorktrees = worktrees.filter((wt) => !samePath(wt.path, repoRoot)).slice(0, WORKTREE_LINK_LIMIT);
 const totalLinkedWorktrees = worktrees.filter((wt) => !samePath(wt.path, repoRoot)).length;
 
-const lines = [];
-lines.push("git-state");
-lines.push("repo:");
-lines.push("  insideWorktree: yes");
-lines.push(`  root: ${compactPath(repoRoot, repoRoot)}`);
-lines.push(`  cwd: ${compactPath(process.cwd(), repoRoot)}`);
-lines.push(`  branch: ${isDetached ? `detached ${head}` : branchName}`);
-lines.push(`  head: ${head}`);
-lines.push(`  upstream: ${upstream}${upstreamCounts ? ` (${formatAheadBehind(upstreamCounts)})` : upstream === "none" ? "" : " (unknown)"}`);
-if (upstream === "none" && !isDetached) lines.push(`  publishStatus: no upstream for branch ${branchName}`);
-lines.push(`  origin: ${origin}`);
-lines.push(`  vsDefault: ${defaultBranch === "unknown" ? "unknown" : `HEAD ${formatAheadBehind(defaultCounts)} from ${defaultBranch}`}`);
-lines.push(`  remoteTracking: ${remoteTrackingLine(remoteOptions.remoteMode, remoteCache)}`);
-lines.push(`  remoteCheck: ${remoteStatusLine(remoteOptions.remoteMode, remoteCache, remoteStale, remoteLock.live, remoteRefreshStarted)}`);
-for (const warning of optionWarnings) lines.push(`  optionsWarning: ${warning}`);
-lines.push(`  lastCommit: ${compactSubject(lastCommitResult.ok ? lastCommitResult.stdout : "")}`);
-lines.push(`  stash: ${stashLines.length === 0 ? "none" : `${stashLines.length} (top: ${compactSubject(stashLines[0])})`}`);
-lines.push("workingTree:");
-lines.push(`  state: ${dirty ? "dirty" : "clean"}`);
-lines.push(`  counts: staged ${status.counts.staged}, modified ${status.counts.modified}, untracked ${status.counts.untracked}, deleted ${status.counts.deleted}, conflicts ${status.counts.conflicts}`);
-if (status.entries.length === 0) {
-  lines.push("  changedFiles: none");
-} else {
-  const shown = status.entries.slice(0, STATUS_LIST_LIMIT);
-  lines.push(`  changedFiles (${shown.length}/${status.entries.length}):`);
-  for (const entry of shown) lines.push(`    ${entry.render}`);
-  if (status.entries.length > shown.length) lines.push(`    ... ${status.entries.length - shown.length} more not shown`);
+const renderInput = {
+  repoRoot,
+  branchName,
+  isDetached,
+  head,
+  upstream,
+  upstreamCounts,
+  origin,
+  defaultBranch,
+  defaultCounts,
+  remoteOptions,
+  remoteCache,
+  remoteStale,
+  remoteLock,
+  remoteRefreshStarted,
+  optionWarnings,
+  lastCommitResult,
+  stashLines,
+  status,
+  dirty,
+  currentWorktree,
+  linkedWorktrees,
+  totalLinkedWorktrees,
+};
 
-  const shownConflicts = new Set(shown.filter((entry) => entry.isConflict).map((entry) => entry.file));
-  const hiddenConflicts = status.entries.filter((entry) => entry.isConflict && !shownConflicts.has(entry.file));
-  if (hiddenConflicts.length > 0) {
-    lines.push(`  conflictFiles (${hiddenConflicts.length} hidden above):`);
-    for (const entry of hiddenConflicts) lines.push(`    ${entry.render}`);
-  }
-}
-lines.push("worktrees:");
-lines.push(`  ${formatWorktreeRow("current", currentWorktree, repoRoot, dirty)}`);
-if (totalLinkedWorktrees === 0) {
-  lines.push("  linked: none");
-} else {
-  lines.push(`  linked (${linkedWorktrees.length}/${totalLinkedWorktrees}):`);
-  for (const wt of linkedWorktrees) lines.push(`    ${formatWorktreeRow("linked", wt, repoRoot)}`);
-  if (totalLinkedWorktrees > linkedWorktrees.length) lines.push(`    ... ${totalLinkedWorktrees - linkedWorktrees.length} more not shown`);
-}
-
-console.log(lines.join("\n"));
+console.log(verbose ? renderDebugGitState(renderInput) : renderCompactGitState(renderInput));

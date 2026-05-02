@@ -2,13 +2,13 @@
   "$schema": "../schemas/effects.schema.json",
   "effects": [
     {
-      "id": "git-status",
-      "description": "Current git branch and working tree status",
+      "id": "git-state",
+      "about": "Current local git state for this workspace.",
+      "description": "Concise local git state snapshot for this workspace.",
       "command": "node packages/effect-mode/scripts/git-state.mjs",
       "ttlMs": 0,
       "timeoutMs": 2000,
       "maxBytes": 12000,
-      "includeMetadata": false,
       "options": {
         "remoteMode": "background",
         "remoteTtlMs": 900000,
@@ -18,7 +18,8 @@
     },
     {
       "id": "workspace-files",
-      "description": "Top-level workspace files",
+      "about": "Top-level workspace files.",
+      "description": "Top-level workspace files for debugging project shape.",
       "command": "find . -maxdepth 2 -type f | sort | head -80",
       "ttlMs": 30000,
       "maxBytes": 8000

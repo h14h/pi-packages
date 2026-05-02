@@ -13,7 +13,7 @@
     },
     "effects": {
       "type": "array",
-      "description": "Effects are executed sequentially in array order when stale, then rendered into the model context.",
+      "description": "Effects are executed sequentially in array order when stale, then rendered into the compact model context.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -24,9 +24,13 @@
             "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$",
             "description": "Unique memorable effect id. Duplicate ids are invalid, even for disabled effects."
           },
+          "about": {
+            "type": "string",
+            "description": "Optional short model-facing explanation of what the effect captures. Falls back to description when omitted."
+          },
           "description": {
             "type": "string",
-            "description": "Optional human/model-readable explanation of what the effect captures."
+            "description": "Optional human-readable explanation/debug note. Used as model-facing about text only when about is omitted."
           },
           "command": {
             "type": "string",
@@ -65,12 +69,13 @@
           "enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Disabled effects are omitted from model context and shown as disabled in /effects."
+            "description": "Disabled effects are omitted from model context and shown as disabled in /effects-debug."
           },
           "includeMetadata": {
             "type": "boolean",
             "default": true,
-            "description": "Whether to include effect-mode execution metadata (status, command, cwd, age, duration, ttl) in model context. /effects always shows metadata."
+            "deprecated": true,
+            "description": "Deprecated compatibility field. Model context is always compact; execution metadata is shown through /effects-debug."
           },
           "options": {
             "type": "object",
